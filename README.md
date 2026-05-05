@@ -10,7 +10,7 @@
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/Akxios/3x-ui-setup/main/bootstrap.sh)
 ```
-### 2) Альтернатива: официальный установщик 3x-ui
+### 2) Альтернатива: официальный установщик [3x-ui](https://github.com/MHSanaei/3x-ui)
 ```bash
 bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
 ```
@@ -35,7 +35,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.
 
 ## ⚙️ Базовый сценарий (по умолчанию)
 
-Минимальная настройка через .env:
+Минимальная настройка через `.env`:
 ```bash
 DOMAIN=example.com
 LETSENCRYPT_EMAIL=your@email.com
