@@ -4,6 +4,7 @@ log "Installing base packages"
 
 install_packages_if_missing \
     nginx \
+    certbot \
     ufw \
     fail2ban \
     curl \
