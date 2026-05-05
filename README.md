@@ -1,46 +1,42 @@
+# 🚀 3x-ui setup
+
+Быстрая и безопасная базовая настройка VPS-сервера с автоматической конфигурацией основных сервисов.
+
+---
+
+## ⚡ Быстрый старт
+
+### 1. Bootstrap (рекомендуется)
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/Akxios/3x-ui-setup/main/bootstrap.sh)
+2. Альтернативно (официальный installer 3x-ui)
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
 ```
 
+## 🛠 Что настраивается
+- 🌐 Nginx (HTTP → HTTPS + заглушка)
+- 🔥 UFW Firewall
+- 🛡 Fail2Ban
+- 📡 3x-ui (через официальный installer)
+- 🚪 Порты для 3x-ui / Xray
 
-bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
+## 🚫 Что НЕ изменяется
 
-
-
-# VPS Bootstrap
-
-Быстрая базовая настройка VPS.
-
-## Что настраивает
-
-- nginx-заглушку
-- UFW firewall
-- Fail2Ban
-- 3x-ui через официальный installer
-- порты для 3x-ui / Xray
-
-## Что НЕ трогает
+> ⚠️ Важно: безопасность SSH остается под твоим контролем
 
 - SSH-ключи
 - SSH-порт
-- PasswordAuthentication
-- PermitRootLogin
 
-SSH пользователь настраивает сам.
+> 👉 Настройка SSH выполняется вручную
 
-## Установка
+## ⚙️ Базовый сценарий (по умолчанию)
 
+Минимальная настройка через .env:
 ```bash
-cp .env.example .env
-nano .env
-sudo bash scripts/install.sh all
+DOMAIN=example.com
+LETSENCRYPT_EMAIL=your@email.com
+```
 
-
-## Базовый сценарий (по умолчанию)
-
-- В `.env` достаточно указать `DOMAIN` и `LETSENCRYPT_EMAIL`.
-- Скрипт сам поднимет HTTP-заглушку, выпустит Let's Encrypt сертификат и переключит nginx на HTTPS.
-- Если выпуск сертификата не удался (DNS/ACME), скрипт не падает: оставляет рабочий HTTP и выводит предупреждение.
-- В режиме `all` firewall настраивается до шага nginx, чтобы `80/tcp` был открыт для ACME HTTP-01 challenge.
 - В firewall по умолчанию открываются `443/tcp` и `8443/tcp`.
 - Порты панели 3x-ui по умолчанию не открываются — открывайте вручную при необходимости.
