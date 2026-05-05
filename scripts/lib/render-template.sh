@@ -5,7 +5,7 @@ render_template() {
     local output_file="$2"
 
     if [[ ! -f "$input_file" ]]; then
-        fail "Template not found: $input_file"
+        fail "Шаблон не найден: $input_file"
     fi
 
     mkdir -p "$(dirname "$output_file")"

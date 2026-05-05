@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 
 bool_enabled "${ENABLE_UFW:-true}" || {
-    warn "UFW module disabled"
+    warn "Модуль UFW отключён"
     return 0
 }
 
-log "Configuring UFW firewall"
+log "Настройка firewall UFW"
 
 install_packages_if_missing ufw
 
@@ -15,7 +15,7 @@ if [[ -z "${ssh_ports// }" ]]; then
     ssh_ports="22"
 fi
 
-warn "SSH ports to keep open: ${ssh_ports}"
+warn "SSH-порты, которые будут оставлены открытыми: ${ssh_ports}"
 
 ufw --force reset
 ufw default "${UFW_DEFAULT_INCOMING:-deny}" incoming
@@ -52,5 +52,5 @@ done
 ufw --force enable
 ufw reload
 
-ok "UFW configured"
+ok "UFW настроен"
 ufw status verbose

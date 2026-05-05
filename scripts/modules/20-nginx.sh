@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 
 bool_enabled "${ENABLE_NGINX:-true}" || {
-    warn "nginx module disabled"
+    warn "Модуль nginx отключён"
     return 0
 }
 
-log "Configuring nginx stub"
+log "Настройка nginx-заглушки"
 
 install_packages_if_missing nginx
 
@@ -17,7 +17,7 @@ issue_letsencrypt_cert() {
     fi
 
     if [[ -z "${LETSENCRYPT_EMAIL:-}" ]]; then
-        fail "LETSENCRYPT_EMAIL is empty. Set it in .env to enable automatic HTTPS."
+        fail "LETSENCRYPT_EMAIL пустой. Укажите его в .env для автоматического HTTPS."
     fi
 
     install_packages_if_missing certbot
@@ -29,15 +29,14 @@ issue_letsencrypt_cert() {
         --keep-until-expiring \
         "${domains[@]}"
 
-    ok "Let's Encrypt certificate issued/verified"
+    ok "Сертификат Let's Encrypt выпущен/проверен"
 }
-
 
 mkdir -p "$WEB_ROOT"
 
 cat > "${WEB_ROOT}/index.html" <<EOF
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -69,7 +68,7 @@ cat > "${WEB_ROOT}/index.html" <<EOF
 <body>
     <main>
         <h1>${DOMAIN}</h1>
-        <p>Server is running.</p>
+        <p>Сервер работает.</p>
     </main>
 </body>
 </html>
@@ -101,7 +100,7 @@ if bool_enabled "${NGINX_AUTO_HTTPS:-true}"; then
         "$site_file"
 elif bool_enabled "${NGINX_USE_HTTPS:-false}"; then
     if [[ ! -f "$NGINX_CERT_PATH" || ! -f "$NGINX_CERT_KEY_PATH" ]]; then
-        fail "NGINX_USE_HTTPS=true, but cert files not found"
+        fail "NGINX_USE_HTTPS=true, но файлы сертификата не найдены"
     fi
 
     render_template \
@@ -122,4 +121,4 @@ fi
 nginx -t
 systemctl reload nginx || systemctl restart nginx
 
-ok "nginx configured for ${DOMAIN}"
+ok "nginx настроен для ${DOMAIN}"

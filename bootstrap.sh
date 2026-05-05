@@ -6,8 +6,8 @@ REPO_URL="https://github.com/Akxios/3x-ui-setup.git"
 INSTALL_DIR="/opt/3x-ui-setup"
 
 if [[ $EUID -ne 0 ]]; then
-    echo "ERROR: run as root"
-    echo "Example: sudo bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/akxios/3x-ui-setup/main/bootstrap.sh)\""
+    echo "ОШИБКА: запустите от root"
+    echo "Пример: sudo bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Akxios/3x-ui-setup/main/bootstrap.sh)\""
     exit 1
 fi
 
@@ -28,8 +28,8 @@ if [[ ! -f .env ]]; then
 fi
 
 echo
-echo "Edit config now."
-echo "After closing editor, installation will continue."
+echo "Откройте конфиг и отредактируйте его."
+echo "После закрытия редактора установка продолжится."
 echo
 
 nano .env

@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 
 bool_enabled "${INSTALL_3X_UI:-false}" || {
-    warn "3x-ui installation disabled"
+    warn "Установка 3x-ui отключена"
     return 0
 }
 
-log "Installing 3x-ui using official installer"
+log "Установка 3x-ui через официальный installer"
 
 install_packages_if_missing curl ca-certificates
 
 if systemctl list-unit-files | grep -q '^x-ui.service'; then
-    warn "x-ui service already exists. Skipping installer."
-    warn "Use x-ui menu manually if you want to update or reconfigure it."
+    warn "Сервис x-ui уже существует. Установка пропущена."
+    warn "Используйте меню x-ui вручную для обновления или настройки."
     return 0
 fi
 
 bash <(curl -Ls "${THREE_X_UI_INSTALL_URL}")
 
-ok "3x-ui installer finished"
+ok "Установка 3x-ui завершена"

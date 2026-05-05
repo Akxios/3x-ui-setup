@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-log "Status"
+log "Статус системы"
 
 echo ""
 echo "--- UFW ---"
@@ -20,5 +20,5 @@ echo "--- 3x-ui / x-ui ---"
 systemctl status x-ui --no-pager -l || true
 
 echo ""
-echo "--- Listening ports ---"
+echo "--- Прослушиваемые порты ---"
 ss -tulnp || true

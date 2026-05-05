@@ -2,13 +2,13 @@
 
 require_root() {
     if [[ "${EUID}" -ne 0 ]]; then
-        fail "Run as root: sudo bash scripts/install.sh all"
+        fail "Запустите от root: sudo bash scripts/install.sh all"
     fi
 }
 
 require_apt_system() {
     if ! command -v apt-get >/dev/null 2>&1; then
-        fail "This script currently supports Debian/Ubuntu-like systems with apt-get."
+        fail "Скрипт поддерживает только Debian/Ubuntu-подобные системы с apt-get."
     fi
 }
 

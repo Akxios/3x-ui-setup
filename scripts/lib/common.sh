@@ -9,11 +9,11 @@ ok() {
 }
 
 warn() {
-    echo -e "\033[1;33mWARN:\033[0m $*"
+    echo -e "\033[1;33mПРЕДУПРЕЖДЕНИЕ:\033[0m $*"
 }
 
 fail() {
-    echo -e "\033[1;31mERROR:\033[0m $*" >&2
+    echo -e "\033[1;31mОШИБКА:\033[0m $*" >&2
     exit 1
 }
 
@@ -28,14 +28,16 @@ backup_file() {
     if [[ -e "$file" ]]; then
         mkdir -p "$backup_dir"
         cp -a "$file" "$backup_dir/$(echo "$file" | sed 's#/#_#g')"
-        ok "Backup saved: $file"
+        ok "Создан бэкап: $file"
     fi
 }
 
 apt_update_once() {
     if [[ ! -f /tmp/vps-bootstrap-apt-updated ]]; then
+        log "Обновление списка пакетов..."
         apt-get update
         touch /tmp/vps-bootstrap-apt-updated
+        ok "Список пакетов обновлён"
     fi
 }
 
@@ -49,9 +51,11 @@ install_packages_if_missing() {
     done
 
     if [[ "${#missing[@]}" -gt 0 ]]; then
+        log "Установка пакетов: ${missing[*]}"
         apt_update_once
         DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
+        ok "Пакеты установлены"
     else
-        ok "Packages already installed: $*"
+        ok "Пакеты уже установлены: $*"
     fi
 }

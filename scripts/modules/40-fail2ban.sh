@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 
 bool_enabled "${ENABLE_FAIL2BAN:-true}" || {
-    warn "Fail2Ban module disabled"
+    warn "Модуль Fail2Ban отключён"
     return 0
 }
 
-log "Configuring Fail2Ban"
+log "Настройка Fail2Ban"
 
 install_packages_if_missing fail2ban
 
@@ -22,4 +22,4 @@ sleep 2
 fail2ban-client ping || true
 fail2ban-client status || true
 
-ok "Fail2Ban configured"
+ok "Fail2Ban настроен"

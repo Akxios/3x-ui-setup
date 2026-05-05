@@ -1,21 +1,24 @@
 # 🚀 3x-ui setup
 
-Быстрая и безопасная базовая настройка VPS-сервера с автоматической конфигурацией основных сервисов.
+Быстрая и безопасная базовая настройка VPS-сервера с автоматической конфигурацией ключевых сервисов.
 
 ---
 
 ## ⚡ Быстрый старт
 
-### 1. Bootstrap (рекомендуется)
+### 1) Bootstrap (рекомендуется)
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/Akxios/3x-ui-setup/main/bootstrap.sh)
-2. Альтернативно (официальный installer 3x-ui)
+```
+### 2) Альтернатива: официальный установщик 3x-ui
 ```bash
 bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
 ```
 
+---
+
 ## 🛠 Что настраивается
-- 🌐 Nginx (HTTP → HTTPS + заглушка)
+- 🌐 Nginx (редирект HTTP → HTTPS + заглушка)
 - 🔥 UFW Firewall
 - 🛡 Fail2Ban
 - 📡 3x-ui (через официальный installer)
@@ -23,12 +26,12 @@ bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.
 
 ## 🚫 Что НЕ изменяется
 
-> ⚠️ Важно: безопасность SSH остается под твоим контролем
+> ⚠️ Важно: безопасность SSH остаётся под вашим контролем.
 
 - SSH-ключи
 - SSH-порт
 
-> 👉 Настройка SSH выполняется вручную
+> 👉 SSH настраивается вручную.
 
 ## ⚙️ Базовый сценарий (по умолчанию)
 

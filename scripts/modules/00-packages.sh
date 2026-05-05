@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-log "Installing base packages"
+log "Установка базовых пакетов"
 
 install_packages_if_missing \
     nginx \
@@ -16,4 +16,4 @@ install_packages_if_missing \
 systemctl enable nginx >/dev/null 2>&1 || true
 systemctl enable fail2ban >/dev/null 2>&1 || true
 
-ok "Base packages are ready"
+ok "Базовые пакеты готовы"

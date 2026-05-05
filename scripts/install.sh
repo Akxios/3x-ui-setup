@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
-# VPS Bootstrap MVP — main orchestrator
+# VPS Bootstrap — главный оркестратор
 #
-# This file should stay small.
-# Real logic lives in:
+# Этот файл должен оставаться компактным.
+# Основная логика находится в:
 #   scripts/lib/*.sh
 #   scripts/modules/*.sh
 
