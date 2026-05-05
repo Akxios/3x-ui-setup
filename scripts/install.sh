@@ -68,8 +68,8 @@ main() {
     case "$command" in
         all)
             run_module "${SCRIPT_DIR}/modules/00-packages.sh"
-            run_module "${SCRIPT_DIR}/modules/20-nginx.sh"
             run_module "${SCRIPT_DIR}/modules/30-firewall.sh"
+            run_module "${SCRIPT_DIR}/modules/20-nginx.sh"
             run_module "${SCRIPT_DIR}/modules/40-fail2ban.sh"
 
             if [[ "${INSTALL_3X_UI:-false}" == "true" ]]; then
