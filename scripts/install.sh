@@ -1,4 +1,37 @@
 #!/usr/bin/env bash
+
+# VPS Bootstrap MVP — main orchestrator
+#
+# This file should stay small.
+# Real logic lives in:
+#   scripts/lib/*.sh
+#   scripts/modules/*.sh
+
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ENV_FILE="${PROJECT_DIR}/.env"
+
+source "${SCRIPT_DIR}/lib/common.sh"
+source "${SCRIPT_DIR}/lib/checks.sh"
+source "${SCRIPT_DIR}/lib/render-template.sh"
+
+load_env() {
+    if [[ ! -f "$ENV_FILE" ]]; then
+        fail ".env not found. Create it first: cp .env.example .env"
+    fi
+
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+
+    ok "Loaded env: $ENV_FILE"
+}
+
+run_module() {
+    local module_path="$1"
+
+    if [[ ! -f "$module_path" ]]; then
         fail "Module not found: $module_path"
     fi
 
