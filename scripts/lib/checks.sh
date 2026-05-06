@@ -43,10 +43,10 @@ validate_bool() {
     local value="${!name:-}"
 
     case "$value" in
-        true|false|"")
+        true|false|yes|no|1|0|on|off|"")
             ;;
         *)
-            fail "Переменная $name должна быть true или false, сейчас: $value"
+            fail "Переменная $name должна быть boolean, сейчас: $value"
             ;;
     esac
 }
@@ -54,7 +54,7 @@ validate_bool() {
 validate_domain() {
     local domain="$1"
 
-    if [[ ! "$domain" =~ ^[a-zA-Z0-9.-]+$ ]]; then
+    if [[ ! "$domain" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$ ]]; then
         fail "Некорректный DOMAIN: $domain"
     fi
 }

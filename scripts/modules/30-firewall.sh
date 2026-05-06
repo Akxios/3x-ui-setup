@@ -41,6 +41,7 @@ validate_port() {
 
 for port in $ssh_ports; do
     [[ -z "$port" ]] && continue
+    validate_port "$port"
 
     if bool_enabled "${LIMIT_SSH_PORT:-true}"; then
         ufw limit "${port}/tcp"
@@ -65,6 +66,7 @@ done
 
 for port in $udp_ports; do
     [[ -z "$port" ]] && continue
+    validate_port "$port"
     ufw allow "${port}/udp"
 done
 

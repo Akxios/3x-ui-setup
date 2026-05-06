@@ -57,6 +57,10 @@ validate_env() {
     validate_bool NGINX_USE_HTTPS
     validate_bool ENABLE_3X_UI_PORTS
 
+    validate_bool UFW_RESET_RULES
+    validate_bool LIMIT_SSH_PORT
+    validate_bool ENABLE_NGINX_BOTSEARCH
+
     if [[ "${NGINX_AUTO_HTTPS:-false}" == "true" ]]; then
         require_env LETSENCRYPT_EMAIL
     fi
