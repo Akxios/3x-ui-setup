@@ -48,6 +48,10 @@ validate_env() {
 
     validate_domain "$DOMAIN"
 
+    if [[ "$DOMAIN" == "example.com" ]]; then
+        fail "Замените DOMAIN=example.com на реальный домен в .env"
+    fi
+
     validate_bool ENABLE_NGINX
     validate_bool ENABLE_WWW
     validate_bool ENABLE_UFW
@@ -61,11 +65,11 @@ validate_env() {
     validate_bool LIMIT_SSH_PORT
     validate_bool ENABLE_NGINX_BOTSEARCH
 
-    if [[ "${NGINX_AUTO_HTTPS:-false}" == "true" ]]; then
+    if bool_enabled "${NGINX_AUTO_HTTPS:-true}"; then
         require_env LETSENCRYPT_EMAIL
     fi
 
-    if [[ "${INSTALL_3X_UI:-false}" == "true" ]]; then
+    if bool_enabled "${INSTALL_3X_UI:-false}"; then
         require_env THREE_X_UI_INSTALL_URL
     fi
 }
@@ -115,7 +119,7 @@ main() {
             run_module "${SCRIPT_DIR}/modules/20-nginx.sh"
             run_module "${SCRIPT_DIR}/modules/40-fail2ban.sh"
 
-            if [[ "${INSTALL_3X_UI:-false}" == "true" ]]; then
+            if bool_enabled "${INSTALL_3X_UI:-false}"; then
                 run_module "${SCRIPT_DIR}/modules/50-3x-ui.sh"
             fi
 
