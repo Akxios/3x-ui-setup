@@ -29,3 +29,32 @@ detect_ssh_ports() {
 
     echo "22"
 }
+
+require_env() {
+    local name="$1"
+
+    if [[ -z "${!name:-}" ]]; then
+        fail "Обязательная переменная не задана: $name"
+    fi
+}
+
+validate_bool() {
+    local name="$1"
+    local value="${!name:-}"
+
+    case "$value" in
+        true|false|"")
+            ;;
+        *)
+            fail "Переменная $name должна быть true или false, сейчас: $value"
+            ;;
+    esac
+}
+
+validate_domain() {
+    local domain="$1"
+
+    if [[ ! "$domain" =~ ^[a-zA-Z0-9.-]+$ ]]; then
+        fail "Некорректный DOMAIN: $domain"
+    fi
+}

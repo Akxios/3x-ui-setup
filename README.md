@@ -1,5 +1,9 @@
 # 🚀 3x-ui setup
 
+![Shell](https://img.shields.io/badge/Shell-Bash-4EAA25?logo=gnu-bash&logoColor=white)
+![OS](https://img.shields.io/badge/OS-Ubuntu%20%7C%20Debian-blue)
+![License](https://img.shields.io/badge/License-MIT-green)
+
 Быстрая и безопасная базовая настройка VPS-сервера с автоматической конфигурацией ключевых сервисов.
 
 ---

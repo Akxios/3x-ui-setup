@@ -18,7 +18,17 @@ fail() {
 }
 
 bool_enabled() {
-    [[ "${1:-false}" == "true" ]]
+    case "${1:-false}" in
+        true|yes|1|on)
+            return 0
+            ;;
+        false|no|0|off|"")
+            return 1
+            ;;
+        *)
+            fail "Некорректное boolean-значение: $1"
+            ;;
+    esac
 }
 
 backup_file() {
@@ -32,11 +42,13 @@ backup_file() {
     fi
 }
 
+APT_UPDATED_FLAG="/var/run/vps-bootstrap-apt-updated"
+
 apt_update_once() {
-    if [[ ! -f /tmp/vps-bootstrap-apt-updated ]]; then
+    if [[ ! -f "$APT_UPDATED_FLAG" ]]; then
         log "Обновление списка пакетов..."
         apt-get update
-        touch /tmp/vps-bootstrap-apt-updated
+        touch "$APT_UPDATED_FLAG"
         ok "Список пакетов обновлён"
     fi
 }

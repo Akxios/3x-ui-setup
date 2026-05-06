@@ -14,6 +14,20 @@ PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ENV_FILE="${PROJECT_DIR}/.env"
 
 source "${SCRIPT_DIR}/lib/common.sh"
+
+on_error() {
+    local exit_code=$?
+    local line_no="${1:-unknown}"
+    local command="${2:-unknown}"
+
+    echo ""
+    echo -e "\033[1;31mОШИБКА:\033[0m команда завершилась с кодом $exit_code"
+    echo "Строка: $line_no"
+    echo "Команда: $command"
+    exit "$exit_code"
+}
+
+trap 'on_error "$LINENO" "$BASH_COMMAND"' ERR
 source "${SCRIPT_DIR}/lib/checks.sh"
 source "${SCRIPT_DIR}/lib/render-template.sh"
 
@@ -26,6 +40,30 @@ load_env() {
     source "$ENV_FILE"
 
     ok "Конфигурация загружена: $ENV_FILE"
+}
+
+validate_env() {
+    require_env DOMAIN
+    require_env WEB_ROOT
+
+    validate_domain "$DOMAIN"
+
+    validate_bool ENABLE_NGINX
+    validate_bool ENABLE_WWW
+    validate_bool ENABLE_UFW
+    validate_bool ENABLE_FAIL2BAN
+    validate_bool INSTALL_3X_UI
+    validate_bool NGINX_AUTO_HTTPS
+    validate_bool NGINX_USE_HTTPS
+    validate_bool ENABLE_3X_UI_PORTS
+
+    if [[ "${NGINX_AUTO_HTTPS:-false}" == "true" ]]; then
+        require_env LETSENCRYPT_EMAIL
+    fi
+
+    if [[ "${INSTALL_3X_UI:-false}" == "true" ]]; then
+        require_env THREE_X_UI_INSTALL_URL
+    fi
 }
 
 run_module() {
@@ -64,6 +102,7 @@ main() {
     require_root
     require_apt_system
     load_env
+    validate_env
 
     case "$command" in
         all)

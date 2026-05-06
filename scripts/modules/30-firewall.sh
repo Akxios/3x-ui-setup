@@ -17,9 +17,27 @@ fi
 
 warn "SSH-порты, которые будут оставлены открытыми: ${ssh_ports}"
 
-ufw --force reset
+if bool_enabled "${UFW_RESET_RULES:-false}"; then
+    warn "Будут сброшены все текущие правила UFW"
+    ufw --force reset
+else
+    warn "Сброс UFW пропущен. Для полного сброса укажите UFW_RESET_RULES=true"
+fi
+
 ufw default "${UFW_DEFAULT_INCOMING:-deny}" incoming
 ufw default "${UFW_DEFAULT_OUTGOING:-allow}" outgoing
+
+validate_port() {
+    local port="$1"
+
+    if [[ ! "$port" =~ ^[0-9]+$ ]]; then
+        fail "Некорректный порт: $port"
+    fi
+
+    if (( port < 1 || port > 65535 )); then
+        fail "Порт вне диапазона 1-65535: $port"
+    fi
+}
 
 for port in $ssh_ports; do
     [[ -z "$port" ]] && continue
@@ -41,6 +59,7 @@ fi
 
 for port in $tcp_ports; do
     [[ -z "$port" ]] && continue
+    validate_port "$port"
     ufw allow "${port}/tcp"
 done
 
