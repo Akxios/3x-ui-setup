@@ -19,23 +19,23 @@ source "${SCRIPT_DIR}/lib/render-template.sh"
 
 load_env() {
     if [[ ! -f "$ENV_FILE" ]]; then
-        fail ".env not found. Create it first: cp .env.example .env"
+        fail ".env не найден. Сначала создайте его: cp .env.example .env"
     fi
 
     # shellcheck disable=SC1090
     source "$ENV_FILE"
 
-    ok "Loaded env: $ENV_FILE"
+    ok "Конфигурация загружена: $ENV_FILE"
 }
 
 run_module() {
     local module_path="$1"
 
     if [[ ! -f "$module_path" ]]; then
-        fail "Module not found: $module_path"
+        fail "Модуль не найден: $module_path"
     fi
 
-    log "Running module: ${module_path#$PROJECT_DIR/}"
+    log "Запуск модуля: ${module_path#$PROJECT_DIR/}"
 
     # shellcheck disable=SC1090
     source "$module_path"
@@ -43,7 +43,7 @@ run_module() {
 
 usage() {
     cat <<EOF
-Usage:
+Использование:
   sudo bash scripts/install.sh all
   sudo bash scripts/install.sh packages
   sudo bash scripts/install.sh nginx
@@ -52,7 +52,7 @@ Usage:
   sudo bash scripts/install.sh 3x-ui
   sudo bash scripts/install.sh status
 
-Before first run:
+Перед первым запуском:
   cp .env.example .env
   nano .env
 EOF
@@ -101,7 +101,7 @@ main() {
             ;;
         *)
             usage
-            fail "Unknown command: $command"
+            fail "Неизвестная команда: $command"
             ;;
     esac
 }
