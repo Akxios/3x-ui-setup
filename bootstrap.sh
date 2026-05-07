@@ -34,4 +34,13 @@ echo
 
 nano .env
 
+echo
+read -p "Конфигурация завершена? Начать установку? [y/N] " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo -e "\n\033[1;33mУстановка прервана пользователем.\033[0m"
+    echo "Чтобы продолжить позже, запустите: sudo bash scripts/install.sh all"
+    exit 1
+fi
+
 bash scripts/install.sh all

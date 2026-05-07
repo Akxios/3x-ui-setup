@@ -35,6 +35,7 @@ run_nginx_module() {
             --non-interactive --agree-tos \
             --email "$LETSENCRYPT_EMAIL" \
             --keep-until-expiring \
+            --deploy-hook "systemctl reload nginx" \
             "${domains[@]}"
 
         ok "Сертификат Let's Encrypt выпущен/проверен"
@@ -60,6 +61,9 @@ run_nginx_module() {
 
         if [[ -e /etc/nginx/sites-enabled/default ]]; then
             rm -f /etc/nginx/sites-enabled/default
+        fi
+        if [[ -e /etc/nginx/conf.d/default.conf ]]; then
+            rm -f /etc/nginx/conf.d/default.conf
         fi
 
         nginx -t

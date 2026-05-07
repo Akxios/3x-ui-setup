@@ -61,12 +61,14 @@ fi
 for port in $tcp_ports; do
     [[ -z "$port" ]] && continue
     validate_port "$port"
+    check_port_free "$port" "tcp" || true
     ufw allow "${port}/tcp"
 done
 
 for port in $udp_ports; do
     [[ -z "$port" ]] && continue
     validate_port "$port"
+    check_port_free "$port" "udp" || true
     ufw allow "${port}/udp"
 done
 

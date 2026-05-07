@@ -58,3 +58,16 @@ validate_domain() {
         fail "Некорректный DOMAIN: $domain"
     fi
 }
+
+check_port_free() {
+    local port="$1"
+    local proto="${2:-tcp}"
+
+    if command_exists ss; then
+        if ss -tuln | grep -qE ":${port}\b"; then
+            warn "Порт $port ($proto) уже прослушивается другим процессом! Возможен конфликт."
+            return 1
+        fi
+    fi
+    return 0
+}
