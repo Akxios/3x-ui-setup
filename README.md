@@ -21,6 +21,15 @@ bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.
 
 ---
 
+Nginx уже выпускает сертификат через Certbot, не выпускайте новый сертификат внутри 3x-ui.
+В панели 3x-ui укажите существующие пути:
+```bash
+/etc/letsencrypt/live/example.com/fullchain.pem
+/etc/letsencrypt/live/example.com/privkey.pem
+```
+
+---
+
 ## 🛠 Что настраивается
 - 🌐 Nginx (редирект HTTP → HTTPS + заглушка)
 - 🔥 UFW Firewall
