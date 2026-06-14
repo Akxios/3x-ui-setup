@@ -15,11 +15,16 @@ render_template \
     "${PROJECT_DIR}/templates/fail2ban/jail.local.tpl" \
     "/etc/fail2ban/jail.local"
 
-systemctl enable fail2ban >/dev/null 2>&1 || true
-systemctl restart fail2ban
+run_logged "Включение Fail2Ban" systemctl enable fail2ban
+run_logged "Перезапуск Fail2Ban" systemctl restart fail2ban
 sleep 2
 
-fail2ban-client ping || true
-fail2ban-client status || true
+if bool_enabled "${VERBOSE:-false}"; then
+    fail2ban-client ping || true
+    fail2ban-client status || true
+fi
 
+summary_section "Fail2Ban"
+summary_add "Статус: включён"
+summary_add "Jail: sshd, nginx-botsearch=${ENABLE_NGINX_BOTSEARCH}"
 ok "Fail2Ban настроен"

@@ -30,7 +30,7 @@ run_nginx_module() {
 
         install_packages_if_missing certbot
 
-        certbot certonly \
+        run_logged "Выпуск/проверка сертификата Let's Encrypt" certbot certonly \
             --webroot -w "$WEB_ROOT" \
             --non-interactive --agree-tos \
             --email "$LETSENCRYPT_EMAIL" \
@@ -38,7 +38,7 @@ run_nginx_module() {
             --deploy-hook "systemctl reload nginx" \
             "${domains[@]}"
 
-        ok "Сертификат Let's Encrypt выпущен/проверен"
+        summary_add "TLS: сертификат Let's Encrypt для ${DOMAIN}"
     }
 
     mkdir -p "$WEB_ROOT"
@@ -66,8 +66,8 @@ run_nginx_module() {
             rm -f /etc/nginx/conf.d/default.conf
         fi
 
-        nginx -t
-        systemctl reload nginx || systemctl restart nginx
+        run_logged "Проверка nginx" nginx -t
+        run_logged "Перезагрузка nginx" bash -c 'systemctl reload nginx || systemctl restart nginx'
 
         issue_letsencrypt_cert
 
@@ -96,9 +96,16 @@ run_nginx_module() {
         rm -f /etc/nginx/sites-enabled/default
     fi
 
-    nginx -t
-    systemctl reload nginx || systemctl restart nginx
+    run_logged "Проверка nginx" nginx -t
+    run_logged "Перезагрузка nginx" bash -c 'systemctl reload nginx || systemctl restart nginx'
 
+    summary_section "Nginx"
+    summary_add "Сайт: ${DOMAIN}"
+    summary_add "Web root: ${WEB_ROOT}"
+    if bool_enabled "$auto_https" || bool_enabled "$use_https"; then
+        summary_add "Сертификат: ${NGINX_CERT_PATH}"
+        summary_add "Ключ: ${NGINX_CERT_KEY_PATH}"
+    fi
     ok "nginx настроен для ${DOMAIN}"
 }
 

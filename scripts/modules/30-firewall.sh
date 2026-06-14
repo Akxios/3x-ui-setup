@@ -19,13 +19,13 @@ warn "SSH-порты, которые будут оставлены открыт�
 
 if bool_enabled "${UFW_RESET_RULES:-false}"; then
     warn "Будут сброшены все текущие правила UFW"
-    ufw --force reset
+    run_logged "Сброс правил UFW" ufw --force reset
 else
     warn "Сброс UFW пропущен. Для полного сброса укажите UFW_RESET_RULES=true"
 fi
 
-ufw default "${UFW_DEFAULT_INCOMING:-deny}" incoming
-ufw default "${UFW_DEFAULT_OUTGOING:-allow}" outgoing
+run_logged "Политика UFW incoming=${UFW_DEFAULT_INCOMING:-deny}" ufw default "${UFW_DEFAULT_INCOMING:-deny}" incoming
+run_logged "Политика UFW outgoing=${UFW_DEFAULT_OUTGOING:-allow}" ufw default "${UFW_DEFAULT_OUTGOING:-allow}" outgoing
 
 validate_port() {
     local port="$1"
@@ -44,9 +44,9 @@ for port in $ssh_ports; do
     validate_port "$port"
 
     if bool_enabled "${LIMIT_SSH_PORT:-true}"; then
-        ufw limit "${port}/tcp"
+        run_logged "UFW limit ${port}/tcp" ufw limit "${port}/tcp"
     else
-        ufw allow "${port}/tcp"
+        run_logged "UFW allow ${port}/tcp" ufw allow "${port}/tcp"
     fi
 done
 
@@ -62,18 +62,24 @@ for port in $tcp_ports; do
     [[ -z "$port" ]] && continue
     validate_port "$port"
     check_port_free "$port" "tcp" || true
-    ufw allow "${port}/tcp"
+    run_logged "UFW allow ${port}/tcp" ufw allow "${port}/tcp"
 done
 
 for port in $udp_ports; do
     [[ -z "$port" ]] && continue
     validate_port "$port"
     check_port_free "$port" "udp" || true
-    ufw allow "${port}/udp"
+    run_logged "UFW allow ${port}/udp" ufw allow "${port}/udp"
 done
 
-ufw --force enable
-ufw reload
+run_logged "Включение UFW" ufw --force enable
+run_logged "Перезагрузка UFW" ufw reload
 
+summary_section "Firewall"
+summary_add "SSH порты: ${ssh_ports}"
+summary_add "TCP порты: $(echo "$tcp_ports" | xargs)"
+summary_add "UDP порты: $(echo "$udp_ports" | xargs)"
 ok "UFW настроен"
-ufw status verbose
+if bool_enabled "${VERBOSE:-false}"; then
+    ufw status verbose
+fi

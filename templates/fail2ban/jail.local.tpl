@@ -1,3 +1,5 @@
+# Managed by vps-server
+
 [DEFAULT]
 bantime  = {{FAIL2BAN_BANTIME}}
 findtime = {{FAIL2BAN_FINDTIME}}

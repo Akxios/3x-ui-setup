@@ -14,6 +14,13 @@
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/Akxios/3x-ui-setup/main/bootstrap.sh)
 ```
+Команда откроет меню: установка, редактирование `.env`, удаление сервисов или статус.
+
+Для установки без меню:
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Akxios/3x-ui-setup/main/bootstrap.sh) install
+```
+
 ### 2) Альтернатива: официальный установщик [3x-ui](https://github.com/MHSanaei/3x-ui)
 ```bash
 bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
@@ -54,8 +61,37 @@ DOMAIN=example.com
 LETSENCRYPT_EMAIL=your@email.com
 ```
 
-- В firewall по умолчанию открываются `443/tcp` и `8443/tcp`.
+- В firewall по умолчанию открываются `80/tcp`, `443/tcp` и `8443/tcp`.
 - Порты панели 3x-ui по умолчанию не открываются — открывайте вручную при необходимости.
+- Остальные поля необязательны: установщик подставляет дефолты сам.
+- Полный пример всех полей: [docs/configuration.md](docs/configuration.md).
+- Итог установки сохраняется в `/root/vps-bootstrap-summary.txt`.
+- Подробные логи сохраняются в `/var/log/vps-bootstrap/`.
+
+## 🧹 Удаление
+
+Интерактивное удаление через bootstrap:
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Akxios/3x-ui-setup/main/bootstrap.sh) remove
+```
+
+Локально после установки:
+```bash
+sudo bash scripts/install.sh remove
+sudo bash scripts/install.sh remove nginx
+sudo bash scripts/install.sh remove fail2ban
+sudo bash scripts/install.sh remove 3x-ui
+sudo bash scripts/install.sh remove ufw
+sudo bash scripts/install.sh remove all
+```
+
+По умолчанию удаляются управляемые конфиги/сервисы, но web-root и apt-пакеты сохраняются.
+Для более жёсткого удаления можно включить флаги в `.env`:
+```bash
+REMOVE_WEB_ROOT=true
+REMOVE_CERTBOT_CERT=true
+PURGE_PACKAGES=true
+```
 
 ---
 
