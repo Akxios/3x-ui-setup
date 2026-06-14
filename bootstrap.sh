@@ -8,6 +8,19 @@ INSTALL_DIR="${INSTALL_DIR:-/opt/3x-ui-setup}"
 COMMAND="${1:-${COMMAND:-menu}}"
 BOOTSTRAP_LOG="${BOOTSTRAP_LOG:-/tmp/vps-bootstrap-bootstrap.log}"
 
+validate_install_dir() {
+    case "$INSTALL_DIR" in
+        ""|"/"|"/root"|"/home"|"/opt"|"/usr"|"/var"|"/tmp")
+            echo "ОШИБКА: небезопасный INSTALL_DIR: ${INSTALL_DIR}"
+            exit 1
+            ;;
+    esac
+}
+
+valid_domain() {
+    [[ "$1" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$ ]]
+}
+
 if [[ "$COMMAND" == "help" || "$COMMAND" == "-h" || "$COMMAND" == "--help" ]]; then
     cat <<EOF
 Использование:
@@ -22,8 +35,15 @@ fi
 
 if [[ $EUID -ne 0 ]]; then
     if command -v sudo >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
+        tmp_script="$(mktemp)"
         echo "Запрашиваю root-доступ через sudo..."
-        exec sudo bash -c "$(curl -fsSL "$BOOTSTRAP_URL")" -- "$@"
+        curl -fsSL "$BOOTSTRAP_URL" -o "$tmp_script"
+        exec sudo \
+            REPO_URL="$REPO_URL" \
+            BOOTSTRAP_URL="$BOOTSTRAP_URL" \
+            INSTALL_DIR="$INSTALL_DIR" \
+            BOOTSTRAP_LOG="$BOOTSTRAP_LOG" \
+            bash "$tmp_script" "$@"
     fi
 
     echo "ОШИБКА: запустите от root"
@@ -47,6 +67,7 @@ run_bootstrap_cmd() {
 
 prepare_repo() {
     : > "$BOOTSTRAP_LOG"
+    validate_install_dir
 
     run_bootstrap_cmd "Подготовка apt" apt-get update
     run_bootstrap_cmd "Установка базовых утилит" env DEBIAN_FRONTEND=noninteractive apt-get install -y git curl nano ca-certificates
@@ -92,11 +113,19 @@ configure_minimal_env() {
 
     local value
 
-    read -r -p "Домен [${DOMAIN:-example.com}]: " value
-    if [[ -n "$value" ]]; then
-        set_env_value DOMAIN "$value"
-        DOMAIN="$value"
-    fi
+    while true; do
+        read -r -p "Домен [${DOMAIN:-example.com}]: " value
+        if [[ -n "$value" ]]; then
+            DOMAIN="$value"
+        fi
+
+        if [[ "${DOMAIN:-example.com}" != "example.com" ]] && valid_domain "$DOMAIN"; then
+            set_env_value DOMAIN "$DOMAIN"
+            break
+        fi
+
+        echo "Укажите реальный домен, например example.org"
+    done
 
     read -r -p "Email для Let's Encrypt [${LETSENCRYPT_EMAIL:-admin@example.com}]: " value
     if [[ -n "$value" ]]; then

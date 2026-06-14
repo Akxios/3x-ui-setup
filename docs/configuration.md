@@ -76,7 +76,7 @@ REMOVE_CONFIRM="false"
 # Логи и итог
 VERBOSE="false"
 LOG_DIR="/var/log/vps-bootstrap"
-SUMMARY_FILE="/root/vps-bootstrap-summary.txt"
+# SUMMARY_FILE="/root/vps-bootstrap-summary.txt"
 ```
 
 `XUI_INSTALL_VISIBLE=true` оставляет вывод официального installer 3x-ui на экране, потому что он может быть интерактивным. При этом весь вывод сохраняется в отдельный transcript, а строки с логином, паролем, портом и URL добавляются в итоговый summary.
@@ -84,6 +84,9 @@ SUMMARY_FILE="/root/vps-bootstrap-summary.txt"
 `VERBOSE=false` скрывает шум apt/ufw/systemctl/nginx/certbot-команд. При ошибке скрипт покажет последние строки лога.
 
 `VERBOSE=true` полезен для диагностики: статус покажет полный `systemctl`, `nginx -t`, `fail2ban-client status` и список прослушиваемых портов.
+
+По умолчанию `sudo bash scripts/install.sh all` сохраняет итог в `/root/vps-bootstrap-summary.txt`.
+Команды `status` и `remove` пишут свои временные summary в `LOG_DIR`, чтобы не перезаписать сохранённые данные установки.
 
 ## Удаление через bootstrap
 

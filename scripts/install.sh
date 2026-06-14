@@ -101,7 +101,6 @@ apply_env_defaults() {
 
     set_default VERBOSE "false"
     set_default LOG_DIR "/var/log/vps-bootstrap"
-    set_default SUMMARY_FILE "/root/vps-bootstrap-summary.txt"
 }
 
 validate_env() {

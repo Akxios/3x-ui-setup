@@ -25,7 +25,7 @@ server {
     add_header X-Frame-Options DENY always;
     add_header Referrer-Policy no-referrer-when-downgrade always;
 
-    location ~* \\.(env|git|htaccess|htpasswd|ini|log|conf)$ {
+    location ~* \.(env|git|htaccess|htpasswd|ini|log|conf)$ {
         deny all;
     }
 

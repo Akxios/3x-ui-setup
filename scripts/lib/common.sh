@@ -38,7 +38,13 @@ init_runtime_files() {
 
     LOG_DIR="${LOG_DIR:-/var/log/vps-bootstrap}"
     LOG_FILE="${LOG_FILE:-${LOG_DIR}/${command}-${timestamp}.log}"
-    SUMMARY_FILE="${SUMMARY_FILE:-/root/vps-bootstrap-summary.txt}"
+    if [[ -z "${SUMMARY_FILE:-}" || ( "$command" != "all" && "${SUMMARY_FILE:-}" == "/root/vps-bootstrap-summary.txt" ) ]]; then
+        if [[ "$command" == "all" ]]; then
+            SUMMARY_FILE="/root/vps-bootstrap-summary.txt"
+        else
+            SUMMARY_FILE="${LOG_DIR}/${command}-${timestamp}-summary.txt"
+        fi
+    fi
 
     mkdir -p "$LOG_DIR" "$(dirname "$SUMMARY_FILE")"
     : > "$LOG_FILE"
@@ -65,7 +71,11 @@ run_logged() {
     append_log_header "$description"
 
     if bool_enabled "${VERBOSE:-false}"; then
-        "$@" 2>&1 | tee -a "${LOG_FILE:-/tmp/vps-bootstrap.log}"
+        if "$@" 2>&1 | tee -a "${LOG_FILE:-/tmp/vps-bootstrap.log}"; then
+            ok "$description"
+        else
+            fail "$description"
+        fi
     else
         if "$@" >> "${LOG_FILE:-/tmp/vps-bootstrap.log}" 2>&1; then
             ok "$description"
