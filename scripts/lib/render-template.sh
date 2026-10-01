@@ -34,6 +34,14 @@ render_template() {
     rendered="${rendered//\{\{ENABLE_NGINX_BOTSEARCH\}\}/${ENABLE_NGINX_BOTSEARCH}}"
     rendered="${rendered//\{\{SSH_PORTS\}\}/${ssh_ports}}"
 
+    local ipv6_http_listen="" ipv6_https_listen=""
+    if [[ -r /proc/net/if_inet6 ]] && grep -q . /proc/net/if_inet6; then
+        ipv6_http_listen="listen [::]:80;"
+        ipv6_https_listen="listen [::]:443 ssl http2;"
+    fi
+    rendered="${rendered//\{\{NGINX_IPV6_HTTP_LISTEN\}\}/${ipv6_http_listen}}"
+    rendered="${rendered//\{\{NGINX_IPV6_HTTPS_LISTEN\}\}/${ipv6_https_listen}}"
+
     local proxy_locations=""
     if [[ -f "${XUI_STATE_FILE:-/etc/3x-ui-setup/access.json}" ]]; then
         proxy_locations="$(xui_setup proxy)" || return 1

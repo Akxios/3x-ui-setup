@@ -66,6 +66,23 @@ def existing_path(value):
     return "/" + value.strip("/") + "/" if value.strip("/") else "/"
 
 
+def subscription_path(value):
+    if not isinstance(value, str):
+        raise SetupError("Путь подписки должен быть строкой")
+    value = existing_path(value)
+    if not re.fullmatch(r"/[A-Za-z0-9_-]{1,80}/", value):
+        raise SetupError("Путь подписки содержит недопустимые символы")
+    return value
+
+
+def subscription_paths(state):
+    return (
+        subscription_path(state.get("sub_path", "/sub/")),
+        subscription_path(state.get("sub_json_path", "/subjson/")),
+        subscription_path(state.get("sub_clash_path", "/subclash/")),
+    )
+
+
 def installed():
     return Path("/usr/local/x-ui/x-ui").is_file()
 
@@ -147,6 +164,7 @@ class Panel:
 
 def desired_settings(state):
     domain = state["domain"]
+    sub_path, json_path, clash_path = subscription_paths(state)
     return {
         "webListen": "127.0.0.1",
         "webPort": state["panel_port"],
@@ -158,16 +176,16 @@ def desired_settings(state):
         "subListen": "127.0.0.1",
         "subPort": state["sub_port"],
         "subDomain": domain,
-        "subPath": "/sub/",
+        "subPath": sub_path,
         "subCertFile": "",
         "subKeyFile": "",
-        "subURI": f"https://{domain}/sub/",
-        "subJsonPath": "/subjson/",
+        "subURI": f"https://{domain}{sub_path}",
+        "subJsonPath": json_path,
         "subJsonEnable": True,
-        "subJsonURI": f"https://{domain}/subjson/",
-        "subClashPath": "/subclash/",
+        "subJsonURI": f"https://{domain}{json_path}",
+        "subClashPath": clash_path,
         "subClashEnable": True,
-        "subClashURI": f"https://{domain}/subclash/",
+        "subClashURI": f"https://{domain}{clash_path}",
     }
 
 
@@ -209,11 +227,13 @@ def prepare():
     if not re.fullmatch(r"[A-Za-z0-9.-]+", domain):
         raise SetupError("Некорректный домен")
     state = load_state() if state_path().exists() else {}
+    previously_verified = state.get("verified") is True
     if state and state["domain"] != domain:
         raise SetupError(
             "DOMAIN отличается от сохранённого. Миграцию домена выполните отдельно."
         )
-    imported = import_result() if installed() else {}
+    has_panel = installed()
+    imported = import_result() if has_panel else {}
     username = (
         os.environ.get("XUI_USERNAME")
         or state.get("username")
@@ -224,7 +244,7 @@ def prepare():
         or state.get("password")
         or imported.get("XUI_PASSWORD")
     )
-    if installed() and not (username and password):
+    if has_panel and not (username and password):
         raise SetupError(
             "Панель уже установлена. Укажите её текущие XUI_USERNAME и XUI_PASSWORD в .env. Пароль не сбрасывался."
         )
@@ -262,9 +282,23 @@ def prepare():
             "Порт панели/подписки совпадает с SSH, Xray или EXTRA_TCP_PORTS"
         )
     settings = None
-    if installed():
+    if has_panel:
         api = Panel(current_endpoint(), username, password, domain)
         settings = api.settings()  # Authenticate before changing anything.
+    for state_key, api_key in (
+        ("sub_path", "subPath"),
+        ("sub_json_path", "subJsonPath"),
+        ("sub_clash_path", "subClashPath"),
+    ):
+        current = (settings or {}).get(api_key)
+        value = (
+            (current if previously_verified else None)
+            or state.get(state_key)
+            or current
+        )
+        state[state_key] = subscription_path(value or secrets.token_hex(12))
+    if len({state["panel_path"], *subscription_paths(state)}) != 4:
+        raise SetupError("Пути панели и подписок должны различаться")
     check_ports(state, settings)
     save_state(state)  # Persist generated credentials BEFORE installer starts.
 
@@ -372,11 +406,12 @@ def proxy():
     if state["domain"] != os.environ["DOMAIN"]:
         raise SetupError("Домен сохранённой панели не совпадает с DOMAIN")
     panel_path = base_path(state["panel_path"])
+    sub_path, json_path, clash_path = subscription_paths(state)
     for path, number in (
         (panel_path, port(state["panel_port"])),
-        ("/sub/", port(state["sub_port"])),
-        ("/subjson/", port(state["sub_port"])),
-        ("/subclash/", port(state["sub_port"])),
+        (sub_path, port(state["sub_port"])),
+        (json_path, port(state["sub_port"])),
+        (clash_path, port(state["sub_port"])),
     ):
         route = "panel" if path == panel_path else "subscription"
         print(f"""    location ^~ {path} {{
@@ -401,11 +436,12 @@ def proxy():
 def verify():
     state = load_state()
     domain = state["domain"]
+    sub_path = subscription_paths(state)[0]
     # --resolve exercises nginx routing and real TLS verification locally.
     # This cannot prove that a provider firewall permits external connections.
     for path, route in (
         (state["panel_path"], "panel"),
-        ("/sub/__setup_healthcheck__", "subscription"),
+        (sub_path + "__setup_healthcheck__", "subscription"),
     ):
         result = subprocess.run(
             [
@@ -449,12 +485,15 @@ def verify():
 def access_text(state):
     verified = state.get("verified", False)
     title = "УСТАНОВКА ЗАВЕРШЕНА" if verified else "НАСТРОЙКА НЕ ЗАВЕРШЕНА"
+    sub_path, json_path, clash_path = subscription_paths(state)
     rows = [
         ("Сайт", f"https://{state['domain']}/"),
         ("Панель", f"https://{state['domain']}{state['panel_path']}"),
         ("Логин", state["username"]),
         ("Пароль", state["password"]),
-        ("Подписка (шаблон)", f"https://{state['domain']}/sub/<ID-клиента>"),
+        ("Подписка (шаблон)", f"https://{state['domain']}{sub_path}<ID-клиента>"),
+        ("JSON (шаблон)", f"https://{state['domain']}{json_path}<ID-клиента>"),
+        ("Clash (шаблон)", f"https://{state['domain']}{clash_path}<ID-клиента>"),
         ("Внешний HTTPS-порт", "443/tcp — сайт, панель и подписка"),
         ("Панель на сервере", f"127.0.0.1:{state['panel_port']}"),
         ("Подписка на сервере", f"127.0.0.1:{state['sub_port']}"),
@@ -466,7 +505,7 @@ def access_text(state):
     label_width = max(len(label) for label, _ in rows)
     lines = [f"{label.ljust(label_width)}  {value}" for label, value in rows]
     note = (
-        "Проверка HTTPS и входа пройдена."
+        "Проверка HTTPS-маршрутов и входа пройдена; клиентская подписка не проверена."
         if verified
         else "Проверка не завершена; доступность сервиса не подтверждена."
     )

@@ -168,6 +168,28 @@ nginx_site_guard""")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(site.read_text(), "user maintained\n")
 
+    def test_managed_nginx_site_is_created_and_enabled(self):
+        self.command(
+            "nginx",
+            'if [ "$1" = -T ]; then printf "# configuration file %s/%s:\\n" "$NGINX_ENABLED_DIR" "$DOMAIN"; fi\nexit 0',
+        )
+        self.command("systemctl", "exit 0")
+        template = self.base / "site.tpl"
+        template.write_text("# Managed by 3x-ui-setup\nserver { listen 80; }\n")
+        result = self.bash(
+            'source "$SCRIPT_DIR/lib/common.sh"\n'
+            'source "$SCRIPT_DIR/lib/nginx-site.sh"\n'
+            'render_template() { cp "$1" "$2"; }\n'
+            'nginx_apply_template "$TEST_TEMPLATE"',
+            {"TEST_TEMPLATE": str(template)},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        site = Path(self.env["NGINX_SITE_DIR"]) / self.env["DOMAIN"]
+        enabled = Path(self.env["NGINX_ENABLED_DIR"]) / self.env["DOMAIN"]
+        self.assertEqual(site.read_text(), template.read_text())
+        self.assertTrue(enabled.is_symlink())
+        self.assertEqual(enabled.resolve(), site)
+
     def test_certbot_failure_restores_previous_https_site(self):
         self.command(
             "nginx",
@@ -260,11 +282,73 @@ source "$SCRIPT_DIR/modules/20-nginx.sh"''',
             },
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Nginx не загрузил конфиг сайта", result.stderr)
+        self.assertIn("не загрузил новый сайт", result.stderr)
         self.assertFalse(Path(self.env["OPERATIONS"]).exists())
 
+    def test_www_acme_route_is_checked_before_certbot(self):
+        self.command(
+            "nginx",
+            'if [ "$1" = -T ]; then printf "# configuration file %s/%s:\\n" "$NGINX_ENABLED_DIR" "$DOMAIN"; fi\nexit 0',
+        )
+        self.command("systemctl", "exit 0")
+        self.command("certbot", 'echo called > "$OPERATIONS"')
+        self.command(
+            "curl",
+            'for url do :; done\ncase "$url" in http://www.*) printf wrong ;; *) cat "$WEB_ROOT/.well-known/acme-challenge/${url##*/}" ;; esac',
+        )
+        result = self.bash(
+            '''source "$SCRIPT_DIR/lib/common.sh"
+source "$SCRIPT_DIR/lib/nginx-site.sh"
+install_packages_if_missing() { :; }
+render_template() { cp "$1" "$2"; }
+source "$SCRIPT_DIR/modules/20-nginx.sh"''',
+            {
+                "WEB_ROOT": str(self.base / "webroot"),
+                "ENABLE_WWW": "true",
+                "NGINX_AUTO_HTTPS": "true",
+                "NGINX_USE_HTTPS": "false",
+                "NGINX_CERT_PATH": str(self.base / "missing.pem"),
+                "NGINX_CERT_KEY_PATH": str(self.base / "missing-key.pem"),
+                "LETSENCRYPT_EMAIL": "admin@example.org",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("www.safe.example.org", result.stderr)
+        self.assertFalse(Path(self.env["OPERATIONS"]).exists())
+
+    def test_nginx_template_listens_on_ipv6_when_available(self):
+        if not Path("/proc/net/if_inet6").read_text().strip():
+            self.skipTest("IPv6 is unavailable")
+        output = self.base / "site.conf"
+        result = self.bash(
+            'source "$SCRIPT_DIR/lib/common.sh"\n'
+            'source "$SCRIPT_DIR/lib/render-template.sh"\n'
+            "detect_ssh_ports() { echo 22; }\n"
+            'render_template "$PROJECT_DIR/templates/nginx/stub-https.conf.tpl" "$OUTPUT"',
+            {
+                "OUTPUT": str(output),
+                "WEB_ROOT": str(self.base / "webroot"),
+                "NGINX_CERT_PATH": str(self.base / "cert.pem"),
+                "NGINX_CERT_KEY_PATH": str(self.base / "key.pem"),
+                "XUI_STATE_FILE": str(self.base / "missing.json"),
+                "FAIL2BAN_BANTIME": "1h",
+                "FAIL2BAN_FINDTIME": "10m",
+                "FAIL2BAN_MAXRETRY": "3",
+                "FAIL2BAN_BANACTION": "ufw",
+                "FAIL2BAN_IGNORE_IPS": "127.0.0.1/8 ::1",
+                "ENABLE_NGINX_BOTSEARCH": "true",
+            },
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        config = output.read_text()
+        self.assertIn("listen [::]:80;", config)
+        self.assertIn("listen [::]:443 ssl http2;", config)
+
     def test_old_placeholder_is_upgraded_but_custom_website_is_preserved(self):
-        self.command("nginx", "exit 0")
+        self.command(
+            "nginx",
+            'if [ "$1" = -T ]; then printf "# configuration file %s/%s:\\n" "$NGINX_ENABLED_DIR" "$DOMAIN"; fi\nexit 0',
+        )
         self.command("systemctl", "exit 0")
         webroot = self.base / "webroot"
         webroot.mkdir()
@@ -336,7 +420,7 @@ source "$SCRIPT_DIR/modules/40-fail2ban.sh"''',
                 "set -Eeuo pipefail\nset_env_value() {" + function + "\n"
                 'set_env_value LETSENCRYPT_EMAIL "$PAYLOAD"\n'
                 'source "$SCRIPT_DIR/lib/env-file.sh"\n'
-                'load_env_file .env\n'
+                "load_env_file .env\n"
                 'test "$LETSENCRYPT_EMAIL" = "$PAYLOAD"',
             ],
             cwd=self.base,
@@ -351,9 +435,7 @@ source "$SCRIPT_DIR/modules/40-fail2ban.sh"''',
     def test_env_rejects_commands_without_running_them(self):
         marker = self.base / "injected"
         env_file = self.base / ".env"
-        env_file.write_text(
-            f'DOMAIN="safe.example.org"\ntouch {marker}\n'
-        )
+        env_file.write_text(f'DOMAIN="safe.example.org"\ntouch {marker}\n')
         result = self.bash(
             'source "$SCRIPT_DIR/lib/env-file.sh"\nload_env_file "$ENV_PATH"',
             {"ENV_PATH": str(env_file)},
@@ -362,7 +444,11 @@ source "$SCRIPT_DIR/modules/40-fail2ban.sh"''',
         self.assertFalse(marker.exists())
 
     def test_nginx_paths_reject_directive_injection_and_traversal(self):
-        for path in ("/var/www/site; include /tmp/evil;", "/var/www/../etc", "/var/www//site"):
+        for path in (
+            "/var/www/site; include /tmp/evil;",
+            "/var/www/../etc",
+            "/var/www//site",
+        ):
             with self.subTest(path=path):
                 result = self.bash(
                     'source "$SCRIPT_DIR/lib/common.sh"\n'
@@ -380,8 +466,8 @@ source "$SCRIPT_DIR/modules/40-fail2ban.sh"''',
         result = self.bash(
             'source "$SCRIPT_DIR/lib/common.sh"\n'
             'source "$SCRIPT_DIR/lib/checks.sh"\n'
-            'guard_remove_webroot() {' + function + '\n'
-            'WEB_ROOT=/var\nguard_remove_webroot',
+            "guard_remove_webroot() {" + function + "\n"
+            "WEB_ROOT=/var\nguard_remove_webroot",
         )
         self.assertNotEqual(result.returncode, 0)
 
@@ -389,22 +475,31 @@ source "$SCRIPT_DIR/modules/40-fail2ban.sh"''',
         remote = self.base / "remote"
         remote.mkdir()
         subprocess.run(["git", "init", "-q", str(remote)], check=True)
-        subprocess.run(["git", "-C", str(remote), "config", "user.email", "test@example.org"], check=True)
-        subprocess.run(["git", "-C", str(remote), "config", "user.name", "Test"], check=True)
+        subprocess.run(
+            ["git", "-C", str(remote), "config", "user.email", "test@example.org"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(remote), "config", "user.name", "Test"], check=True
+        )
         (remote / ".env.example").write_text("DOMAIN=example.org\n")
         subprocess.run(["git", "-C", str(remote), "add", ".env.example"], check=True)
         subprocess.run(["git", "-C", str(remote), "commit", "-qm", "old"], check=True)
-        old = subprocess.check_output(["git", "-C", str(remote), "rev-parse", "HEAD"], text=True).strip()
+        old = subprocess.check_output(
+            ["git", "-C", str(remote), "rev-parse", "HEAD"], text=True
+        ).strip()
         (remote / "new.txt").write_text("new\n")
         subprocess.run(["git", "-C", str(remote), "add", "new.txt"], check=True)
         subprocess.run(["git", "-C", str(remote), "commit", "-qm", "new"], check=True)
         source = (ROOT / "bootstrap.sh").read_text()
-        function = source.split("prepare_repo() {", 1)[1].split("\nset_env_value() {", 1)[0]
+        function = source.split("prepare_repo() {", 1)[1].split(
+            "\nset_env_value() {", 1
+        )[0]
         checkout = self.base / "checkout"
         result = self.bash(
-            'validate_install_dir() { :; }\n'
+            "validate_install_dir() { :; }\n"
             'run_bootstrap_cmd() { shift; case "$1" in apt-get|env) return 0;; esac; "$@"; }\n'
-            'prepare_repo() {' + function + '\nprepare_repo',
+            "prepare_repo() {" + function + "\nprepare_repo",
             {
                 "REPO_URL": str(remote),
                 "REPO_COMMIT": old,
@@ -413,7 +508,9 @@ source "$SCRIPT_DIR/modules/40-fail2ban.sh"''',
             },
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        actual = subprocess.check_output(["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True).strip()
+        actual = subprocess.check_output(
+            ["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True
+        ).strip()
         self.assertEqual(actual, old)
         self.assertFalse((checkout / "new.txt").exists())
 

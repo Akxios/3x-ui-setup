@@ -49,6 +49,59 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(setup.state_path().stat().st_mode & 0o777, 0o600)
         self.assertEqual(setup.state_path().parent.stat().st_mode & 0o777, 0o700)
         self.assertFalse(first["verified"])
+        paths = setup.subscription_paths(first)
+        self.assertEqual(len({first["panel_path"], *paths}), 4)
+        for path in paths:
+            self.assertRegex(path, r"^/[a-f0-9]{24}/$")
+        self.assertEqual(first["sub_path"], second["sub_path"])
+
+    def test_existing_subscription_paths_are_preserved(self):
+        state = self.prepare()
+        for key in ("sub_path", "sub_json_path", "sub_clash_path"):
+            state.pop(key)
+        setup.save_state(state)
+        api = Mock()
+        api.settings.return_value = {
+            "webPort": state["panel_port"],
+            "subPort": state["sub_port"],
+            "subPath": "/existing-sub/",
+            "subJsonPath": "/existing-json/",
+            "subClashPath": "/existing-clash/",
+        }
+        with (
+            patch.object(setup, "installed", return_value=True),
+            patch.object(setup, "import_result", return_value={}),
+            patch.object(setup, "current_endpoint", return_value="http://local/"),
+            patch.object(setup, "Panel", return_value=api),
+            patch.object(setup, "check_ports"),
+        ):
+            setup.prepare()
+        self.assertEqual(
+            setup.subscription_paths(setup.load_state()),
+            ("/existing-sub/", "/existing-json/", "/existing-clash/"),
+        )
+
+    def test_manual_subscription_path_change_is_preserved_on_retry(self):
+        state = self.prepare()
+        state["verified"] = True
+        setup.save_state(state)
+        api = Mock()
+        api.settings.return_value = {
+            "webPort": state["panel_port"],
+            "subPort": state["sub_port"],
+            "subPath": "/manual-sub/",
+            "subJsonPath": state["sub_json_path"],
+            "subClashPath": state["sub_clash_path"],
+        }
+        with (
+            patch.object(setup, "installed", return_value=True),
+            patch.object(setup, "import_result", return_value={}),
+            patch.object(setup, "current_endpoint", return_value="http://local/"),
+            patch.object(setup, "Panel", return_value=api),
+            patch.object(setup, "check_ports"),
+        ):
+            setup.prepare()
+        self.assertEqual(setup.load_state()["sub_path"], "/manual-sub/")
 
     def test_existing_install_without_credentials_is_untouched(self):
         with (
@@ -125,6 +178,15 @@ class SetupTests(unittest.TestCase):
         self.assertTrue(payload["subEnable"])
         self.assertTrue(payload["subJsonEnable"])
         self.assertTrue(payload["subClashEnable"])
+        self.assertEqual(payload["subPath"], state["sub_path"])
+        self.assertEqual(payload["subJsonPath"], state["sub_json_path"])
+        self.assertEqual(payload["subClashPath"], state["sub_clash_path"])
+        self.assertEqual(
+            payload["subURI"], f"https://{state['domain']}{state['sub_path']}"
+        )
+        self.assertEqual(
+            payload["subJsonURI"], f"https://{state['domain']}{state['sub_json_path']}"
+        )
         run.assert_called_once_with(["systemctl", "restart", "x-ui"], check=True)
         self.assertFalse(setup.load_state()["verified"])
 
@@ -152,9 +214,17 @@ class SetupTests(unittest.TestCase):
             setup.proxy()
         text = output.getvalue()
         self.assertIn("location ^~ " + state["panel_path"], text)
-        self.assertIn("location ^~ /sub/", text)
+        for path in setup.subscription_paths(state):
+            self.assertIn("location ^~ " + path, text)
         self.assertIn("proxy_pass http://127.0.0.1:2053;", text)
         self.assertNotIn(state["password"], text)
+
+    def test_invalid_saved_subscription_path_cannot_enter_nginx_config(self):
+        state = self.prepare()
+        state["sub_path"] = "/bad;return 200;/"
+        setup.save_state(state)
+        with self.assertRaises(setup.SetupError):
+            setup.proxy()
 
     def test_failed_https_does_not_publish_success_or_overwrite_card(self):
         self.prepare()
@@ -179,10 +249,14 @@ class SetupTests(unittest.TestCase):
             )
         ]
         with (
-            patch.object(setup.subprocess, "run", side_effect=results),
+            patch.object(setup.subprocess, "run", side_effect=results) as run,
             patch.object(setup.socket, "create_connection"),
         ):
             setup.verify()
+        self.assertIn(
+            state["sub_path"] + "__setup_healthcheck__",
+            run.call_args_list[1].args[0][-1],
+        )
         card = Path(os.environ["XUI_ACCESS_FILE"])
         card_text = card.read_text()
         self.assertIn("УСТАНОВКА ЗАВЕРШЕНА", card_text)
@@ -192,7 +266,10 @@ class SetupTests(unittest.TestCase):
         self.assertIn("443/tcp — сайт, панель и подписка", card_text)
         self.assertIn(f"127.0.0.1:{state['panel_port']}", card_text)
         self.assertIn(f"127.0.0.1:{state['sub_port']}", card_text)
-        self.assertIn("/sub/<ID-клиента>", card_text)
+        self.assertIn(state["sub_path"] + "<ID-клиента>", card_text)
+        self.assertIn(state["sub_json_path"] + "<ID-клиента>", card_text)
+        self.assertIn(state["sub_clash_path"] + "<ID-клиента>", card_text)
+        self.assertIn("клиентская подписка не проверена", card_text)
         self.assertIn("после создания inbound и клиента", card_text)
         self.assertEqual(card.stat().st_mode & 0o777, 0o600)
         self.assertTrue(setup.load_state()["verified"])

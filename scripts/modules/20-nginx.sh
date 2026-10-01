@@ -42,28 +42,47 @@ prepare_acme_directories() {
 
 verify_acme_http_route() {
     local challenge_dir="$WEB_ROOT/.well-known/acme-challenge"
-    local probe response url enabled_file site_file
+    local probe response url enabled_file domain address attempt served
+    local -a domains=("$DOMAIN") addresses=(127.0.0.1)
+    if bool_enabled "${ENABLE_WWW:-false}"; then
+        domains+=("www.${DOMAIN}")
+    fi
+    if [[ -r /proc/net/if_inet6 ]] && grep -q . /proc/net/if_inet6; then
+        addresses+=("[::1]")
+    fi
     enabled_file="${NGINX_ENABLED_DIR:-/etc/nginx/sites-enabled}/${DOMAIN}"
-    site_file="${NGINX_SITE_DIR:-/etc/nginx/sites-available}/${DOMAIN}"
-    if ! nginx -T 2>> "$LOG_FILE" | grep -F -e "# configuration file ${enabled_file}:" \
-        -e "# configuration file ${site_file}:" > /dev/null; then
+    if ! nginx_site_loaded; then
         fail "Nginx не загрузил конфиг сайта ${enabled_file}. Проверьте include sites-enabled в nginx.conf"
     fi
     probe="$(mktemp "$challenge_dir/setup-XXXXXXXX")"
     printf '%s\n' "${probe##*/}" > "$probe"
     chmod 644 "$probe"
-    url="http://${DOMAIN}/.well-known/acme-challenge/${probe##*/}"
-    if ! response="$(curl --noproxy '*' --silent --show-error --fail --max-time 10 \
-        --resolve "${DOMAIN}:80:127.0.0.1" "$url")"; then
-        if [[ -f /var/log/nginx/error.log ]]; then
-            grep -F "${probe##*/}" /var/log/nginx/error.log | tail -n 3 >&2 || :
-        fi
-        warn "Проверочный файл: $probe (права пути: namei -l '$probe')"
-        rm -f "$probe"
-        fail "Nginx не отдаёт ACME-файл локально по HTTP. Конфиг загружен; проверьте права файла и другие server_name на порту 80"
-    fi
+    for domain in "${domains[@]}"; do
+        url="http://${domain}/.well-known/acme-challenge/${probe##*/}"
+        for address in "${addresses[@]}"; do
+            served=false
+            # nginx reload returns before every worker has necessarily switched
+            # to the new vhost, so allow a short convergence window.
+            for attempt in 1 2 3 4 5; do
+                if response="$(curl --noproxy '*' --silent --show-error --fail --connect-timeout 2 --max-time 3 \
+                    --resolve "${domain}:80:${address}" "$url" 2>> "$LOG_FILE")" &&
+                    [[ "$response" == "${probe##*/}" ]]; then
+                    served=true
+                    break
+                fi
+                sleep 0.2
+            done
+            if [[ "$served" != true ]]; then
+                if [[ -f /var/log/nginx/error.log ]]; then
+                    grep -F "${probe##*/}" /var/log/nginx/error.log | tail -n 3 >&2 || :
+                fi
+                warn "Проверочный файл: $probe (права пути: namei -l '$probe')"
+                rm -f "$probe"
+                fail "Nginx не отдаёт ACME-файл для ${domain} через ${address}:80. Проверьте server_name, IPv6 и права WEB_ROOT; Certbot не запускался"
+            fi
+        done
+    done
     rm -f "$probe"
-    [[ "$response" == "${probe##*/}" ]] || fail "По HTTP домена вернулся не ACME-файл. Проверьте другой nginx server block на порту 80"
 }
 
 install_www_placeholder() {
@@ -185,6 +204,8 @@ run_nginx_module() {
 
     summary_section "Nginx"
     summary_add "Сайт: ${DOMAIN}"
+    summary_add "Nginx available: ${NGINX_SITE_DIR:-/etc/nginx/sites-available}/${DOMAIN}"
+    summary_add "Nginx enabled: ${NGINX_ENABLED_DIR:-/etc/nginx/sites-enabled}/${DOMAIN}"
     summary_add "Web root: ${WEB_ROOT}"
     if bool_enabled "$auto_https" || bool_enabled "$use_https"; then
         summary_add "Сертификат: ${NGINX_CERT_PATH}"

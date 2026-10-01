@@ -1,6 +1,7 @@
 # Managed by 3x-ui-setup
 server {
     listen 80;
+    {{NGINX_IPV6_HTTP_LISTEN}}
     server_name {{DOMAIN}} {{WWW_DOMAIN}};
 
     location ^~ /.well-known/acme-challenge/ {
@@ -16,6 +17,7 @@ server {
 
 server {
     listen 443 ssl http2;
+    {{NGINX_IPV6_HTTPS_LISTEN}}
     server_name {{DOMAIN}} {{WWW_DOMAIN}};
 
     root {{WEB_ROOT}};

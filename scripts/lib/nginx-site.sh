@@ -14,6 +14,13 @@ nginx_site_guard() {
     fi
 }
 
+nginx_site_loaded() {
+    local site_file="${NGINX_SITE_DIR:-/etc/nginx/sites-available}/${DOMAIN}"
+    local enabled_file="${NGINX_ENABLED_DIR:-/etc/nginx/sites-enabled}/${DOMAIN}"
+    nginx -T 2>> "$LOG_FILE" | grep -F -e "# configuration file ${enabled_file}:" \
+        -e "# configuration file ${site_file}:" > /dev/null
+}
+
 nginx_apply_template() {
     local template="$1"
     local site_file="${NGINX_SITE_DIR:-/etc/nginx/sites-available}/${DOMAIN}"
@@ -36,7 +43,9 @@ nginx_apply_template() {
     mv -f "$staged" "$site_file"
     ln -sfn "$site_file" "$enabled_file"
 
-    if nginx -t >> "$LOG_FILE" 2>&1 && systemctl reload nginx >> "$LOG_FILE" 2>&1; then
+    if nginx -t >> "$LOG_FILE" 2>&1 &&
+        systemctl reload nginx >> "$LOG_FILE" 2>&1 &&
+        nginx_site_loaded; then
         rm -f "$backup"
         ok "nginx-конфиг проверен и применён"
         return 0
@@ -52,7 +61,7 @@ nginx_apply_template() {
     fi
     rm -f "$backup"
     nginx -t >> "$LOG_FILE" 2>&1 && systemctl reload nginx >> "$LOG_FILE" 2>&1 || warn "Не удалось перезагрузить nginx после отката"
-    fail "nginx не принял новый конфиг; предыдущая конфигурация восстановлена"
+    fail "nginx не принял или не загрузил новый сайт ${enabled_file}; предыдущая конфигурация восстановлена. Проверьте include sites-enabled в nginx.conf и лог: $LOG_FILE"
 }
 
 nginx_restore_snapshot() {
