@@ -46,6 +46,7 @@
 
 - Чистый или контролируемый VPS на Debian/Ubuntu.
 - Root-доступ или пользователь с `sudo`.
+- Python 3 для локального запуска `scripts/install.sh` (bootstrap установит его автоматически).
 - Домен, A/AAAA-запись которого уже указывает на IP сервера.
 - Открытый доступ к портам `80/tcp` и `443/tcp` для Certbot и nginx.
 - Доступ к GitHub, репозиториям apt и Let's Encrypt.
@@ -60,10 +61,13 @@
 ### 1) Bootstrap с меню
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Akxios/3x-ui-setup/main/bootstrap.sh)
+SHA=<полный-40-символьный-SHA-проверенного-коммита>
+curl -fsSLo bootstrap.sh "https://raw.githubusercontent.com/Akxios/3x-ui-setup/${SHA}/bootstrap.sh"
+# Проверьте содержимое bootstrap.sh перед запуском от root.
+sudo env REPO_COMMIT="$SHA" bash bootstrap.sh
 ```
 
-Bootstrap скачает репозиторий в `/opt/3x-ui-setup`, создаст `.env` из `.env.example`, откроет меню и предложит минимальную настройку.
+Bootstrap закрепит checkout за указанным SHA в `/opt/3x-ui-setup`, создаст `.env` из `.env.example`, откроет меню и предложит минимальную настройку. SHA берите со страницы проверенного коммита проекта; SHA для bootstrap-файла и `REPO_COMMIT` должен совпадать. Храните скачанный файл локально для повторного запуска.
 
 Меню bootstrap:
 
@@ -79,7 +83,7 @@ Bootstrap скачает репозиторий в `/opt/3x-ui-setup`, созд�
 ### 2) Установка без меню
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Akxios/3x-ui-setup/main/bootstrap.sh) install
+sudo env REPO_COMMIT="$SHA" bash bootstrap.sh install
 ```
 
 ### 3) Локальный запуск из клона
@@ -219,14 +223,14 @@ NGINX_CERT_KEY_PATH="/path/to/privkey.pem"
 
 Перед повторной установкой сертификат остаётся обслуживаться по HTTPS. Временный HTTP-конфиг нужен только при первом выпуске сертификата; при ошибке Certbot исходный конфиг восстанавливается. Fail2Ban настраивается через собственный jail-файл. Старый `jail.local` с отметкой прежней версии проекта переносится автоматически; пользовательский файл сохраняется.
 
-Для установки из проверенной версии проекта используйте локальный клон конкретного commit SHA. Команда `curl` из ветки `main` и автоматическое `git pull` доверяют текущему содержимому репозитория. `REPO_COMMIT` в bootstrap сверяет SHA полученного checkout, но сам bootstrap по-прежнему клонирует или обновляет ветку репозитория. Для другой версии официального 3x-ui задайте вместе `THREE_X_UI_VERSION`, `THREE_X_UI_INSTALL_URL` и `THREE_X_UI_INSTALL_SHA256`. Без совпадения SHA-256 скачанный installer не запускается.
+Для установки из проверенной версии проекта скачивайте `bootstrap.sh` по SHA коммита и передавайте тот же SHA как `REPO_COMMIT`. Bootstrap получает коммиты и переключается на указанный SHA до запуска кода из checkout; обновления ветки `main` не меняют закреплённую версию. Запуск файла из `main` остаётся незакреплённым на первом этапе. Для другой версии официального 3x-ui задайте вместе `THREE_X_UI_VERSION`, `THREE_X_UI_INSTALL_URL` и `THREE_X_UI_INSTALL_SHA256`. Без совпадения SHA-256 скачанный installer не запускается.
 
 ## Удаление
 
 Интерактивное удаление через bootstrap:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Akxios/3x-ui-setup/main/bootstrap.sh) remove
+sudo env REPO_COMMIT="$SHA" bash bootstrap.sh remove
 ```
 
 Локально после установки:

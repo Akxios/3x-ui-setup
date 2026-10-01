@@ -5,7 +5,6 @@ umask 077
 
 REPO_URL="${REPO_URL:-https://github.com/Akxios/3x-ui-setup.git}"
 REPO_COMMIT="${REPO_COMMIT:-}"
-BOOTSTRAP_URL="${BOOTSTRAP_URL:-https://raw.githubusercontent.com/Akxios/3x-ui-setup/main/bootstrap.sh}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/3x-ui-setup}"
 COMMAND="${1:-${COMMAND:-menu}}"
 ASSUME_YES="${ASSUME_YES:-false}"
@@ -27,12 +26,9 @@ valid_domain() {
 if [[ "$COMMAND" == "help" || "$COMMAND" == "-h" || "$COMMAND" == "--help" ]]; then
     cat <<EOF
 Использование:
-  bash <(curl -fsSL ${BOOTSTRAP_URL})
-  bash <(curl -fsSL ${BOOTSTRAP_URL}) install
-  bash <(curl -fsSL ${BOOTSTRAP_URL}) remove
-  bash <(curl -fsSL ${BOOTSTRAP_URL}) remove nginx
-  bash <(curl -fsSL ${BOOTSTRAP_URL}) status
-  bash <(curl -fsSL ${BOOTSTRAP_URL}) access
+  sudo env REPO_COMMIT=<полный-SHA-коммита> bash bootstrap.sh [install|remove|status|access]
+
+Скачивайте bootstrap.sh из того же commit SHA, что указан в REPO_COMMIT.
 
 ASSUME_YES=true — установка без вопросов с уже заполненным .env.
 EOF
@@ -40,22 +36,24 @@ EOF
 fi
 
 if [[ $EUID -ne 0 ]]; then
-    if command -v sudo >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
+    if command -v sudo >/dev/null 2>&1 && [[ -r "$0" ]]; then
         tmp_script="$(mktemp)"
         echo "Запрашиваю root-доступ через sudo..."
-        curl -fsSL "$BOOTSTRAP_URL" -o "$tmp_script"
-        exec sudo \
+        cp -- "$0" "$tmp_script"
+        bootstrap_status=0
+        sudo env \
             REPO_URL="$REPO_URL" \
             REPO_COMMIT="$REPO_COMMIT" \
-            BOOTSTRAP_URL="$BOOTSTRAP_URL" \
             INSTALL_DIR="$INSTALL_DIR" \
             BOOTSTRAP_LOG="$BOOTSTRAP_LOG" \
             ASSUME_YES="$ASSUME_YES" \
-            bash "$tmp_script" "$@"
+            bash "$tmp_script" "$@" || bootstrap_status=$?
+        rm -f -- "$tmp_script"
+        exit "$bootstrap_status"
     fi
 
     echo "ОШИБКА: запустите от root"
-    echo "Пример: sudo bash -c \"\$(curl -fsSL ${BOOTSTRAP_URL})\""
+    echo "Пример: sudo env REPO_COMMIT=<полный-SHA> bash bootstrap.sh install"
     exit 1
 fi
 
@@ -84,21 +82,30 @@ prepare_repo() {
     fi
 
     run_bootstrap_cmd "Подготовка apt" apt-get update
-    run_bootstrap_cmd "Установка базовых утилит" env DEBIAN_FRONTEND=noninteractive apt-get install -y git curl nano ca-certificates
+    run_bootstrap_cmd "Установка базовых утилит" env DEBIAN_FRONTEND=noninteractive apt-get install -y git curl nano ca-certificates python3
 
     if [[ -d "$INSTALL_DIR/.git" ]]; then
         cd "$INSTALL_DIR"
         [[ "$(git remote get-url origin)" == "$REPO_URL" ]] || { echo "ОШИБКА: origin репозитория отличается от REPO_URL"; exit 1; }
         [[ -z "$(git status --porcelain)" ]] || { echo "ОШИБКА: в $INSTALL_DIR есть несохранённые изменения кода"; exit 1; }
-        run_bootstrap_cmd "Обновление репозитория" git pull --ff-only
+        if [[ -n "$REPO_COMMIT" ]]; then
+            run_bootstrap_cmd "Получение коммитов репозитория" git fetch origin
+        else
+            [[ -n "$(git symbolic-ref --quiet --short HEAD)" ]] || { echo "ОШИБКА: checkout закреплён за коммитом; задайте REPO_COMMIT или переключите ветку вручную"; exit 1; }
+            run_bootstrap_cmd "Обновление репозитория" git pull --ff-only
+        fi
     else
         [[ ! -e "$INSTALL_DIR" && ! -L "$INSTALL_DIR" ]] || { echo "ОШИБКА: $INSTALL_DIR уже существует и не является клоном проекта"; exit 1; }
         run_bootstrap_cmd "Клонирование репозитория" git clone "$REPO_URL" "$INSTALL_DIR"
         cd "$INSTALL_DIR"
     fi
-    if [[ -n "$REPO_COMMIT" && "$(git rev-parse HEAD)" != "$REPO_COMMIT" ]]; then
-        echo "ОШИБКА: загружен другой коммит: $(git rev-parse HEAD)"
-        exit 1
+    if [[ -n "$REPO_COMMIT" ]]; then
+        if ! git cat-file -e "${REPO_COMMIT}^{commit}" 2>/dev/null; then
+            run_bootstrap_cmd "Получение закреплённого коммита" git fetch origin "$REPO_COMMIT"
+        fi
+        git cat-file -e "${REPO_COMMIT}^{commit}" 2>/dev/null || { echo "ОШИБКА: коммит $REPO_COMMIT отсутствует в репозитории"; exit 1; }
+        run_bootstrap_cmd "Закрепление версии проекта" git checkout --detach "$REPO_COMMIT"
+        [[ "$(git rev-parse HEAD)" == "$REPO_COMMIT" ]] || { echo "ОШИБКА: checkout не совпадает с REPO_COMMIT"; exit 1; }
     fi
 
     if [[ ! -f .env ]]; then
@@ -112,8 +119,11 @@ set_env_value() {
     local key="$1"
     local value="$2"
     [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || { echo "ОШИБКА: некорректное имя настройки"; exit 1; }
+    [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || { echo "ОШИБКА: переносы строк в .env не поддерживаются"; exit 1; }
     local quoted line replaced=false staged
-    printf -v quoted '%q' "$value"
+    quoted="${value//\\/\\\\}"
+    quoted="${quoted//\"/\\\"}"
+    quoted="\"${quoted}\""
     staged="$(mktemp ./.env.XXXXXX)"
     while IFS= read -r line || [[ -n "$line" ]]; do
         if [[ "$line" == "$key="* ]]; then
@@ -131,8 +141,7 @@ set_env_value() {
 }
 
 configure_minimal_env() {
-    # shellcheck disable=SC1091
-    source .env
+    load_env_file .env || exit 1
 
     echo
     echo "Минимальная настройка"
@@ -185,8 +194,7 @@ maybe_edit_env() {
 }
 
 install_flow() {
-    # shellcheck disable=SC1091
-    source .env
+    load_env_file .env || exit 1
 
     if [[ "${DOMAIN:-example.com}" == "example.com" ]]; then
         if [[ "$ASSUME_YES" == true ]]; then
@@ -267,6 +275,7 @@ if [[ "$COMMAND" == access && -f "$INSTALL_DIR/scripts/install.sh" ]]; then
 fi
 
 prepare_repo
+source "$INSTALL_DIR/scripts/lib/env-file.sh"
 
 case "$COMMAND" in
     menu|"")

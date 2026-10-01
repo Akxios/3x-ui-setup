@@ -163,8 +163,10 @@ def desired_settings(state):
         "subKeyFile": "",
         "subURI": f"https://{domain}/sub/",
         "subJsonPath": "/subjson/",
+        "subJsonEnable": True,
         "subJsonURI": f"https://{domain}/subjson/",
         "subClashPath": "/subclash/",
+        "subClashEnable": True,
         "subClashURI": f"https://{domain}/subclash/",
     }
 

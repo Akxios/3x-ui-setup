@@ -108,14 +108,42 @@ purge_packages_if_requested() {
     fi
 }
 
+guard_remove_webroot() {
+    validate_config_path WEB_ROOT
+    [[ "$WEB_ROOT" == "/var/www/${DOMAIN}/html" ]] || fail "Автоудаление разрешено только для стандартного WEB_ROOT домена"
+    local path entry entries
+    for path in /var /var/www "/var/www/${DOMAIN}" "$WEB_ROOT"; do
+        [[ ! -L "$path" ]] || fail "WEB_ROOT содержит символьную ссылку: $path"
+    done
+    [[ -d "$WEB_ROOT" ]] || return 0
+    [[ -f "$WEB_ROOT/index.html" && ! -L "$WEB_ROOT/index.html" &&
+        "$(sed -n '2p' "$WEB_ROOT/index.html")" == '<!-- Managed by 3x-ui-setup -->' ]] ||
+        fail "WEB_ROOT не содержит страницу проекта; удаление запрещено"
+    entries="$(mktemp)" || fail "Не удалось создать временный файл для проверки WEB_ROOT"
+    if ! find "$WEB_ROOT" -mindepth 1 -print0 > "$entries"; then
+        rm -f -- "$entries"
+        fail "Не удалось проверить содержимое WEB_ROOT"
+    fi
+    while IFS= read -r -d '' entry; do
+        case "$entry" in
+            "$WEB_ROOT/index.html"|"$WEB_ROOT/.well-known"|"$WEB_ROOT/.well-known/acme-challenge") ;;
+            *) rm -f -- "$entries"; fail "В WEB_ROOT есть пользовательские файлы: $entry; удаление запрещено" ;;
+        esac
+    done < "$entries"
+    rm -f -- "$entries"
+}
+
 remove_nginx() {
     ensure_nginx_domain
+    nginx_site_guard
+    if bool_enabled "${REMOVE_WEB_ROOT:-false}"; then
+        guard_remove_webroot
+    fi
     confirm_remove "nginx-конфиг для ${DOMAIN}"
 
     local site_file="/etc/nginx/sites-available/${DOMAIN}"
     local enabled_file="/etc/nginx/sites-enabled/${DOMAIN}"
 
-    nginx_site_guard
     backup_file "$site_file"
     rm -f "$enabled_file" "$site_file"
 
@@ -169,9 +197,14 @@ remove_3x_ui() {
         fi
     fi
     if bool_enabled "${REMOVE_XUI_DATA:-false}"; then
-        backup_file "$XUI_STATE_FILE"
-        backup_file "$XUI_ACCESS_FILE"
-        rm -f "$XUI_STATE_FILE" "$XUI_ACCESS_FILE" "$(dirname "$XUI_STATE_FILE")/settings-before.json"
+        if [[ "$XUI_STATE_FILE" == /etc/3x-ui-setup/access.json &&
+            "$XUI_ACCESS_FILE" == /root/3x-ui-access.txt ]]; then
+            backup_file "$XUI_STATE_FILE"
+            backup_file "$XUI_ACCESS_FILE"
+            rm -f "$XUI_STATE_FILE" "$XUI_ACCESS_FILE" /etc/3x-ui-setup/settings-before.json
+        else
+            warn "Нестандартные файлы XUI_STATE_FILE/XUI_ACCESS_FILE сохранены; удалите их вручную после проверки"
+        fi
     else
         if command_exists python3; then
             xui_setup invalidate

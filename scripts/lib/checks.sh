@@ -83,6 +83,18 @@ validate_domain() {
     fi
 }
 
+validate_config_path() {
+    local name="$1" path="${!1:-}"
+    [[ "$path" == /* && "$path" != / && "$path" =~ ^/[A-Za-z0-9._/-]+$ &&
+        "$path" != *//* && "$path" != */ ]] || fail "$name: требуется абсолютный путь без пробелов и спецсимволов"
+    local component
+    local -a components
+    IFS=/ read -r -a components <<< "$path"
+    for component in "${components[@]}"; do
+        [[ "$component" != . && "$component" != .. ]] || fail "$name: компоненты . и .. запрещены"
+    done
+}
+
 check_port_free() {
     local port="$1"
     local proto="${2:-tcp}"

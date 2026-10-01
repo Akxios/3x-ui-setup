@@ -335,7 +335,8 @@ source "$SCRIPT_DIR/modules/40-fail2ban.sh"''',
                 "-c",
                 "set -Eeuo pipefail\nset_env_value() {" + function + "\n"
                 'set_env_value LETSENCRYPT_EMAIL "$PAYLOAD"\n'
-                "source .env\n"
+                'source "$SCRIPT_DIR/lib/env-file.sh"\n'
+                'load_env_file .env\n'
                 'test "$LETSENCRYPT_EMAIL" = "$PAYLOAD"',
             ],
             cwd=self.base,
@@ -346,6 +347,75 @@ source "$SCRIPT_DIR/modules/40-fail2ban.sh"''',
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(marker.exists())
         self.assertEqual(((self.base / ".env").stat().st_mode & 0o777), 0o600)
+
+    def test_env_rejects_commands_without_running_them(self):
+        marker = self.base / "injected"
+        env_file = self.base / ".env"
+        env_file.write_text(
+            f'DOMAIN="safe.example.org"\ntouch {marker}\n'
+        )
+        result = self.bash(
+            'source "$SCRIPT_DIR/lib/env-file.sh"\nload_env_file "$ENV_PATH"',
+            {"ENV_PATH": str(env_file)},
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(marker.exists())
+
+    def test_nginx_paths_reject_directive_injection_and_traversal(self):
+        for path in ("/var/www/site; include /tmp/evil;", "/var/www/../etc", "/var/www//site"):
+            with self.subTest(path=path):
+                result = self.bash(
+                    'source "$SCRIPT_DIR/lib/common.sh"\n'
+                    'source "$SCRIPT_DIR/lib/checks.sh"\n'
+                    'WEB_ROOT="$CHECK_PATH"\nvalidate_config_path WEB_ROOT',
+                    {"CHECK_PATH": path},
+                )
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_webroot_removal_rejects_critical_path(self):
+        source = (ROOT / "scripts/modules/80-remove.sh").read_text()
+        function = source.split("guard_remove_webroot() {", 1)[1].split(
+            "\nremove_nginx() {", 1
+        )[0]
+        result = self.bash(
+            'source "$SCRIPT_DIR/lib/common.sh"\n'
+            'source "$SCRIPT_DIR/lib/checks.sh"\n'
+            'guard_remove_webroot() {' + function + '\n'
+            'WEB_ROOT=/var\nguard_remove_webroot',
+        )
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_bootstrap_checks_out_pinned_commit_after_branch_advances(self):
+        remote = self.base / "remote"
+        remote.mkdir()
+        subprocess.run(["git", "init", "-q", str(remote)], check=True)
+        subprocess.run(["git", "-C", str(remote), "config", "user.email", "test@example.org"], check=True)
+        subprocess.run(["git", "-C", str(remote), "config", "user.name", "Test"], check=True)
+        (remote / ".env.example").write_text("DOMAIN=example.org\n")
+        subprocess.run(["git", "-C", str(remote), "add", ".env.example"], check=True)
+        subprocess.run(["git", "-C", str(remote), "commit", "-qm", "old"], check=True)
+        old = subprocess.check_output(["git", "-C", str(remote), "rev-parse", "HEAD"], text=True).strip()
+        (remote / "new.txt").write_text("new\n")
+        subprocess.run(["git", "-C", str(remote), "add", "new.txt"], check=True)
+        subprocess.run(["git", "-C", str(remote), "commit", "-qm", "new"], check=True)
+        source = (ROOT / "bootstrap.sh").read_text()
+        function = source.split("prepare_repo() {", 1)[1].split("\nset_env_value() {", 1)[0]
+        checkout = self.base / "checkout"
+        result = self.bash(
+            'validate_install_dir() { :; }\n'
+            'run_bootstrap_cmd() { shift; case "$1" in apt-get|env) return 0;; esac; "$@"; }\n'
+            'prepare_repo() {' + function + '\nprepare_repo',
+            {
+                "REPO_URL": str(remote),
+                "REPO_COMMIT": old,
+                "INSTALL_DIR": str(checkout),
+                "BOOTSTRAP_LOG": str(self.base / "bootstrap.log"),
+            },
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        actual = subprocess.check_output(["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True).strip()
+        self.assertEqual(actual, old)
+        self.assertFalse((checkout / "new.txt").exists())
 
 
 if __name__ == "__main__":

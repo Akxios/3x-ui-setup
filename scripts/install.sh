@@ -30,19 +30,13 @@ on_error() {
 
 trap 'on_error "$LINENO" "$BASH_COMMAND"' ERR
 source "${SCRIPT_DIR}/lib/checks.sh"
+source "${SCRIPT_DIR}/lib/env-file.sh"
 source "${SCRIPT_DIR}/lib/render-template.sh"
 source "${SCRIPT_DIR}/lib/xui.sh"
 source "${SCRIPT_DIR}/lib/nginx-site.sh"
 
 load_env() {
-    if [[ ! -f "$ENV_FILE" ]]; then
-        fail ".env не найден. Сначала создайте его: cp .env.example .env"
-    fi
-    [[ ! -L "$ENV_FILE" ]] || fail ".env не должен быть символьной ссылкой"
-    chmod 600 "$ENV_FILE"
-
-    # shellcheck disable=SC1090
-    source "$ENV_FILE"
+    load_env_file "$ENV_FILE" || fail "Не удалось безопасно загрузить .env"
 
     ok "Конфигурация загружена: $ENV_FILE"
 }
@@ -122,6 +116,15 @@ validate_env() {
 
     require_env DOMAIN
     require_env WEB_ROOT
+    validate_config_path WEB_ROOT
+    validate_config_path NGINX_CERT_PATH
+    validate_config_path NGINX_CERT_KEY_PATH
+    validate_config_path XUI_STATE_FILE
+    validate_config_path XUI_ACCESS_FILE
+    validate_config_path LOG_DIR
+    if [[ -n "${SUMMARY_FILE:-}" ]]; then
+        validate_config_path SUMMARY_FILE
+    fi
 
     if [[ "$command" != "remove" && "$command" != "delete" && "$command" != "uninstall" && "$command" != "status" ]]; then
         validate_domain "$DOMAIN"
@@ -129,6 +132,9 @@ validate_env() {
         if [[ "$DOMAIN" == "example.com" ]]; then
             fail "Замените DOMAIN=example.com на реальный домен в .env"
         fi
+    fi
+    if [[ "$command" == "remove" || "$command" == "delete" || "$command" == "uninstall" ]]; then
+        [[ "$DOMAIN" == example.com ]] || validate_domain "$DOMAIN"
     fi
 
     validate_bool ENABLE_NGINX
@@ -213,12 +219,12 @@ main() {
     require_root
     if [[ "$command" == "access" ]]; then
         if [[ -f "$ENV_FILE" ]]; then
-            [[ ! -L "$ENV_FILE" ]] || fail ".env не должен быть символьной ссылкой"
-            chmod 600 "$ENV_FILE"
-            source "$ENV_FILE"
+            load_env_file "$ENV_FILE" || fail "Не удалось безопасно загрузить .env"
         fi
         XUI_STATE_FILE="${XUI_STATE_FILE:-/etc/3x-ui-setup/access.json}"
         XUI_ACCESS_FILE="${XUI_ACCESS_FILE:-/root/3x-ui-access.txt}"
+        validate_config_path XUI_STATE_FILE
+        validate_config_path XUI_ACCESS_FILE
         show_xui_access
         return 0
     fi

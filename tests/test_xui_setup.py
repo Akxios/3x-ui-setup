@@ -123,6 +123,8 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(payload["unrelated"], "keep")
         self.assertEqual(payload["webListen"], "127.0.0.1")
         self.assertTrue(payload["subEnable"])
+        self.assertTrue(payload["subJsonEnable"])
+        self.assertTrue(payload["subClashEnable"])
         run.assert_called_once_with(["systemctl", "restart", "x-ui"], check=True)
         self.assertFalse(setup.load_state()["verified"])
 
