@@ -42,15 +42,25 @@ prepare_acme_directories() {
 
 verify_acme_http_route() {
     local challenge_dir="$WEB_ROOT/.well-known/acme-challenge"
-    local probe response url
+    local probe response url enabled_file site_file
+    enabled_file="${NGINX_ENABLED_DIR:-/etc/nginx/sites-enabled}/${DOMAIN}"
+    site_file="${NGINX_SITE_DIR:-/etc/nginx/sites-available}/${DOMAIN}"
+    if ! nginx -T 2>> "$LOG_FILE" | grep -F -e "# configuration file ${enabled_file}:" \
+        -e "# configuration file ${site_file}:" > /dev/null; then
+        fail "Nginx не загрузил конфиг сайта ${enabled_file}. Проверьте include sites-enabled в nginx.conf"
+    fi
     probe="$(mktemp "$challenge_dir/setup-XXXXXXXX")"
     printf '%s\n' "${probe##*/}" > "$probe"
     chmod 644 "$probe"
     url="http://${DOMAIN}/.well-known/acme-challenge/${probe##*/}"
     if ! response="$(curl --noproxy '*' --silent --show-error --fail --max-time 10 \
         --resolve "${DOMAIN}:80:127.0.0.1" "$url")"; then
+        if [[ -f /var/log/nginx/error.log ]]; then
+            grep -F "${probe##*/}" /var/log/nginx/error.log | tail -n 3 >&2 || :
+        fi
+        warn "Проверочный файл: $probe (права пути: namei -l '$probe')"
         rm -f "$probe"
-        fail "Nginx не отдаёт ACME-файл локально по HTTP. Проверьте права WEB_ROOT, порт 80 и конфигурацию nginx"
+        fail "Nginx не отдаёт ACME-файл локально по HTTP. Конфиг загружен; проверьте права файла и другие server_name на порту 80"
     fi
     rm -f "$probe"
     [[ "$response" == "${probe##*/}" ]] || fail "По HTTP домена вернулся не ACME-файл. Проверьте другой nginx server block на порту 80"
