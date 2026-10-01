@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 
 set -Eeuo pipefail
+umask 077
 
 REPO_URL="${REPO_URL:-https://github.com/Akxios/3x-ui-setup.git}"
+REPO_COMMIT="${REPO_COMMIT:-}"
 BOOTSTRAP_URL="${BOOTSTRAP_URL:-https://raw.githubusercontent.com/Akxios/3x-ui-setup/main/bootstrap.sh}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/3x-ui-setup}"
 COMMAND="${1:-${COMMAND:-menu}}"
-BOOTSTRAP_LOG="${BOOTSTRAP_LOG:-/tmp/vps-bootstrap-bootstrap.log}"
+ASSUME_YES="${ASSUME_YES:-false}"
+BOOTSTRAP_LOG="${BOOTSTRAP_LOG:-/var/log/3x-ui-setup-bootstrap.log}"
 
 validate_install_dir() {
     case "$INSTALL_DIR" in
@@ -29,6 +32,9 @@ if [[ "$COMMAND" == "help" || "$COMMAND" == "-h" || "$COMMAND" == "--help" ]]; t
   bash <(curl -fsSL ${BOOTSTRAP_URL}) remove
   bash <(curl -fsSL ${BOOTSTRAP_URL}) remove nginx
   bash <(curl -fsSL ${BOOTSTRAP_URL}) status
+  bash <(curl -fsSL ${BOOTSTRAP_URL}) access
+
+ASSUME_YES=true — установка без вопросов с уже заполненным .env.
 EOF
     exit 0
 fi
@@ -40,9 +46,11 @@ if [[ $EUID -ne 0 ]]; then
         curl -fsSL "$BOOTSTRAP_URL" -o "$tmp_script"
         exec sudo \
             REPO_URL="$REPO_URL" \
+            REPO_COMMIT="$REPO_COMMIT" \
             BOOTSTRAP_URL="$BOOTSTRAP_URL" \
             INSTALL_DIR="$INSTALL_DIR" \
             BOOTSTRAP_LOG="$BOOTSTRAP_LOG" \
+            ASSUME_YES="$ASSUME_YES" \
             bash "$tmp_script" "$@"
     fi
 
@@ -66,41 +74,60 @@ run_bootstrap_cmd() {
 }
 
 prepare_repo() {
+    [[ ! -L "$BOOTSTRAP_LOG" ]] || { echo "ОШИБКА: bootstrap-лог не должен быть symlink"; exit 1; }
     : > "$BOOTSTRAP_LOG"
     validate_install_dir
+    [[ ! -L "$INSTALL_DIR" ]] || { echo "ОШИБКА: INSTALL_DIR не должен быть symlink"; exit 1; }
+    if [[ -n "$REPO_COMMIT" && ! "$REPO_COMMIT" =~ ^[a-fA-F0-9]{40}$ ]]; then
+        echo "ОШИБКА: REPO_COMMIT должен быть полным 40-символьным SHA коммита"
+        exit 1
+    fi
 
     run_bootstrap_cmd "Подготовка apt" apt-get update
     run_bootstrap_cmd "Установка базовых утилит" env DEBIAN_FRONTEND=noninteractive apt-get install -y git curl nano ca-certificates
 
     if [[ -d "$INSTALL_DIR/.git" ]]; then
         cd "$INSTALL_DIR"
+        [[ "$(git remote get-url origin)" == "$REPO_URL" ]] || { echo "ОШИБКА: origin репозитория отличается от REPO_URL"; exit 1; }
+        [[ -z "$(git status --porcelain)" ]] || { echo "ОШИБКА: в $INSTALL_DIR есть несохранённые изменения кода"; exit 1; }
         run_bootstrap_cmd "Обновление репозитория" git pull --ff-only
     else
-        rm -rf "$INSTALL_DIR"
+        [[ ! -e "$INSTALL_DIR" && ! -L "$INSTALL_DIR" ]] || { echo "ОШИБКА: $INSTALL_DIR уже существует и не является клоном проекта"; exit 1; }
         run_bootstrap_cmd "Клонирование репозитория" git clone "$REPO_URL" "$INSTALL_DIR"
         cd "$INSTALL_DIR"
+    fi
+    if [[ -n "$REPO_COMMIT" && "$(git rev-parse HEAD)" != "$REPO_COMMIT" ]]; then
+        echo "ОШИБКА: загружен другой коммит: $(git rev-parse HEAD)"
+        exit 1
     fi
 
     if [[ ! -f .env ]]; then
         cp .env.example .env
     fi
+    [[ ! -L .env ]] || { echo "ОШИБКА: .env не должен быть symlink"; exit 1; }
+    chmod 600 .env
 }
 
 set_env_value() {
     local key="$1"
     local value="$2"
-    local escaped="$value"
-
-    escaped="${escaped//\\/\\\\}"
-    escaped="${escaped//\"/\\\"}"
-    escaped="${escaped//&/\\&}"
-    escaped="${escaped//|/\\|}"
-
-    if grep -q "^${key}=" .env; then
-        sed -i "s|^${key}=.*|${key}=\"${escaped}\"|" .env
-    else
-        printf '%s="%s"\n' "$key" "$escaped" >> .env
+    [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || { echo "ОШИБКА: некорректное имя настройки"; exit 1; }
+    local quoted line replaced=false staged
+    printf -v quoted '%q' "$value"
+    staged="$(mktemp ./.env.XXXXXX)"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" == "$key="* ]]; then
+            printf '%s=%s\n' "$key" "$quoted" >> "$staged"
+            replaced=true
+        else
+            printf '%s\n' "$line" >> "$staged"
+        fi
+    done < .env
+    if [[ "$replaced" == false ]]; then
+        printf '%s=%s\n' "$key" "$quoted" >> "$staged"
     fi
+    chmod 600 "$staged"
+    mv -f "$staged" .env
 }
 
 configure_minimal_env() {
@@ -162,8 +189,12 @@ install_flow() {
     source .env
 
     if [[ "${DOMAIN:-example.com}" == "example.com" ]]; then
+        if [[ "$ASSUME_YES" == true ]]; then
+            echo "ОШИБКА: сначала задайте DOMAIN и LETSENCRYPT_EMAIL в $INSTALL_DIR/.env"
+            exit 1
+        fi
         configure_minimal_env
-    else
+    elif [[ "$ASSUME_YES" != true ]]; then
         echo
         echo "Текущий домен в .env: ${DOMAIN}"
         read -r -p "Использовать текущую конфигурацию? [Y/n] " reply
@@ -172,6 +203,10 @@ install_flow() {
         fi
     fi
 
+    if [[ "$ASSUME_YES" == true ]]; then
+        bash scripts/install.sh all
+        return
+    fi
     maybe_edit_env
 
     echo
@@ -194,6 +229,7 @@ VPS Bootstrap
 2) Открыть .env
 3) Удалить сервисы
 4) Показать статус
+5) Показать данные доступа
 0) Выход
 EOF
 
@@ -213,6 +249,9 @@ EOF
             4)
                 bash scripts/install.sh status
                 ;;
+            5)
+                bash scripts/install.sh access
+                ;;
             0)
                 exit 0
                 ;;
@@ -222,6 +261,10 @@ EOF
         esac
     done
 }
+
+if [[ "$COMMAND" == access && -f "$INSTALL_DIR/scripts/install.sh" ]]; then
+    exec bash "$INSTALL_DIR/scripts/install.sh" access
+fi
 
 prepare_repo
 
@@ -234,6 +277,9 @@ case "$COMMAND" in
         ;;
     remove|delete|uninstall)
         bash scripts/install.sh remove "${@:2}"
+        ;;
+    access)
+        bash scripts/install.sh access
         ;;
     status)
         bash scripts/install.sh status

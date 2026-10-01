@@ -34,5 +34,11 @@ render_template() {
     rendered="${rendered//\{\{ENABLE_NGINX_BOTSEARCH\}\}/${ENABLE_NGINX_BOTSEARCH}}"
     rendered="${rendered//\{\{SSH_PORTS\}\}/${ssh_ports}}"
 
+    local proxy_locations=""
+    if [[ -f "${XUI_STATE_FILE:-/etc/3x-ui-setup/access.json}" ]]; then
+        proxy_locations="$(xui_setup proxy)" || return 1
+    fi
+    rendered="${rendered//\{\{XUI_PROXY_LOCATIONS\}\}/${proxy_locations}}"
+
     printf '%s\n' "$rendered" > "$output_file"
 }

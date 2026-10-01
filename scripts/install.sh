@@ -8,6 +8,7 @@
 #   scripts/modules/*.sh
 
 set -Eeuo pipefail
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -30,11 +31,15 @@ on_error() {
 trap 'on_error "$LINENO" "$BASH_COMMAND"' ERR
 source "${SCRIPT_DIR}/lib/checks.sh"
 source "${SCRIPT_DIR}/lib/render-template.sh"
+source "${SCRIPT_DIR}/lib/xui.sh"
+source "${SCRIPT_DIR}/lib/nginx-site.sh"
 
 load_env() {
     if [[ ! -f "$ENV_FILE" ]]; then
         fail ".env не найден. Сначала создайте его: cp .env.example .env"
     fi
+    [[ ! -L "$ENV_FILE" ]] || fail ".env не должен быть символьной ссылкой"
+    chmod 600 "$ENV_FILE"
 
     # shellcheck disable=SC1090
     source "$ENV_FILE"
@@ -89,12 +94,21 @@ apply_env_defaults() {
     set_default ENABLE_NGINX_BOTSEARCH "true"
 
     set_default INSTALL_3X_UI "true"
-    set_default THREE_X_UI_INSTALL_URL "https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh"
-    set_default XUI_INSTALL_VISIBLE "true"
+    set_default THREE_X_UI_VERSION "v3.8.5"
+    set_default THREE_X_UI_INSTALL_URL "https://raw.githubusercontent.com/MHSanaei/3x-ui/${THREE_X_UI_VERSION}/install.sh"
+    set_default THREE_X_UI_INSTALL_SHA256 "4e3fe7fe00ef8e904ce6a0e9c36fd8a0c7179fe5e786f23e31801aee84c6347d"
+    set_default XUI_INSTALL_VISIBLE "false"
+    set_default XUI_AUTO_CONFIGURE "true"
+    set_default XUI_STATE_FILE "/etc/3x-ui-setup/access.json"
+    set_default XUI_ACCESS_FILE "/root/3x-ui-access.txt"
+    set_default XUI_PANEL_PORT ""
+    set_default XUI_SUB_PORT ""
+    set_default XUI_USERNAME ""
+    set_default XUI_PASSWORD ""
+    set_default XUI_WEB_BASE_PATH ""
 
     set_default REMOVE_WEB_ROOT "false"
     set_default REMOVE_CERTBOT_CERT "false"
-    set_default REMOVE_FAIL2BAN_JAIL "false"
     set_default REMOVE_XUI_DATA "false"
     set_default PURGE_PACKAGES "false"
     set_default REMOVE_CONFIRM "false"
@@ -123,6 +137,7 @@ validate_env() {
     validate_bool ENABLE_FAIL2BAN
     validate_bool INSTALL_3X_UI
     validate_bool XUI_INSTALL_VISIBLE
+    validate_bool XUI_AUTO_CONFIGURE
     validate_bool NGINX_AUTO_HTTPS
     validate_bool NGINX_USE_HTTPS
     validate_bool ENABLE_3X_UI_PORTS
@@ -132,7 +147,6 @@ validate_env() {
     validate_bool ENABLE_NGINX_BOTSEARCH
     validate_bool REMOVE_WEB_ROOT
     validate_bool REMOVE_CERTBOT_CERT
-    validate_bool REMOVE_FAIL2BAN_JAIL
     validate_bool REMOVE_XUI_DATA
     validate_bool PURGE_PACKAGES
     validate_bool REMOVE_CONFIRM
@@ -147,6 +161,8 @@ validate_env() {
     if [[ "$command" == "all" || "$command" == "3x-ui" || "$command" == "x-ui" ]] &&
         bool_enabled "${INSTALL_3X_UI:-false}"; then
         require_env THREE_X_UI_INSTALL_URL
+        require_env THREE_X_UI_INSTALL_SHA256
+        [[ "$THREE_X_UI_INSTALL_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || fail "THREE_X_UI_INSTALL_SHA256 должен быть SHA-256 (64 hex-символа)"
     fi
 }
 
@@ -174,6 +190,7 @@ usage() {
   sudo bash scripts/install.sh fail2ban
   sudo bash scripts/install.sh 3x-ui
   sudo bash scripts/install.sh status
+  sudo bash scripts/install.sh access
   sudo bash scripts/install.sh remove
   sudo bash scripts/install.sh remove nginx|fail2ban|3x-ui|ufw|all
 
@@ -194,6 +211,17 @@ main() {
     esac
 
     require_root
+    if [[ "$command" == "access" ]]; then
+        if [[ -f "$ENV_FILE" ]]; then
+            [[ ! -L "$ENV_FILE" ]] || fail ".env не должен быть символьной ссылкой"
+            chmod 600 "$ENV_FILE"
+            source "$ENV_FILE"
+        fi
+        XUI_STATE_FILE="${XUI_STATE_FILE:-/etc/3x-ui-setup/access.json}"
+        XUI_ACCESS_FILE="${XUI_ACCESS_FILE:-/root/3x-ui-access.txt}"
+        show_xui_access
+        return 0
+    fi
     require_apt_system
     load_env
     apply_env_defaults
@@ -204,6 +232,7 @@ main() {
 
     case "$command" in
         all)
+            prepare_xui
             run_module "${SCRIPT_DIR}/modules/00-packages.sh"
             run_module "${SCRIPT_DIR}/modules/30-firewall.sh"
             run_module "${SCRIPT_DIR}/modules/20-nginx.sh"
@@ -211,10 +240,14 @@ main() {
 
             if bool_enabled "${INSTALL_3X_UI:-false}"; then
                 run_module "${SCRIPT_DIR}/modules/50-3x-ui.sh"
+                run_module "${SCRIPT_DIR}/modules/60-configure-xui.sh"
             fi
 
             run_module "${SCRIPT_DIR}/modules/90-status.sh"
             print_summary
+            if bool_enabled "$INSTALL_3X_UI" && bool_enabled "$XUI_AUTO_CONFIGURE"; then
+                show_xui_access
+            fi
             ;;
         packages)
             run_module "${SCRIPT_DIR}/modules/00-packages.sh"
@@ -229,7 +262,15 @@ main() {
             run_module "${SCRIPT_DIR}/modules/40-fail2ban.sh"
             ;;
         3x-ui|x-ui)
+            prepare_xui
+            if bool_enabled "$INSTALL_3X_UI" && bool_enabled "$XUI_AUTO_CONFIGURE"; then
+                run_module "${SCRIPT_DIR}/modules/30-firewall.sh"
+            fi
             run_module "${SCRIPT_DIR}/modules/50-3x-ui.sh"
+            run_module "${SCRIPT_DIR}/modules/60-configure-xui.sh"
+            if bool_enabled "$INSTALL_3X_UI" && bool_enabled "$XUI_AUTO_CONFIGURE"; then
+                show_xui_access
+            fi
             ;;
         status)
             run_module "${SCRIPT_DIR}/modules/90-status.sh"

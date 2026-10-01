@@ -15,7 +15,6 @@ usage_remove() {
 Опционально через .env:
   REMOVE_WEB_ROOT=true       удалить ${WEB_ROOT}
   REMOVE_CERTBOT_CERT=true   удалить сертификат certbot для ${DOMAIN}
-  REMOVE_FAIL2BAN_JAIL=true  удалить /etc/fail2ban/jail.local без marker-проверки
   REMOVE_XUI_DATA=true       удалить /etc/x-ui
   PURGE_PACKAGES=true        удалить apt-пакеты nginx/fail2ban/ufw
   REMOVE_CONFIRM=true        не спрашивать подтверждение
@@ -116,6 +115,7 @@ remove_nginx() {
     local site_file="/etc/nginx/sites-available/${DOMAIN}"
     local enabled_file="/etc/nginx/sites-enabled/${DOMAIN}"
 
+    nginx_site_guard
     backup_file "$site_file"
     rm -f "$enabled_file" "$site_file"
 
@@ -140,22 +140,18 @@ remove_nginx() {
 }
 
 remove_fail2ban() {
-    confirm_remove "Fail2Ban"
-
-    systemctl stop fail2ban >/dev/null 2>&1 || true
-    systemctl disable fail2ban >/dev/null 2>&1 || true
-
-    if [[ -f /etc/fail2ban/jail.local ]]; then
-        if grep -q "Managed by vps-server" /etc/fail2ban/jail.local || bool_enabled "${REMOVE_FAIL2BAN_JAIL:-false}"; then
-            backup_file /etc/fail2ban/jail.local
-            rm -f /etc/fail2ban/jail.local
-        else
-            warn "/etc/fail2ban/jail.local не похож на файл этого скрипта, оставлен на месте"
+    confirm_remove "Fail2Ban jail проекта"
+    local jail_file="/etc/fail2ban/jail.d/3x-ui-setup.local"
+    if [[ -f "$jail_file" ]]; then
+        grep -qx '# Managed by 3x-ui-setup' "$jail_file" || fail "Jail не создан этим проектом: $jail_file"
+        backup_file "$jail_file"
+        rm -f "$jail_file"
+        if command_exists fail2ban-client; then
+            fail2ban-client -t || fail "Оставшаяся конфигурация Fail2Ban некорректна"
+            systemctl restart fail2ban || fail "Не удалось перезапустить Fail2Ban"
         fi
     fi
-
-    purge_packages_if_requested fail2ban
-    ok "Fail2Ban остановлен/отключён"
+    ok "Fail2Ban jail проекта удалён"
 }
 
 remove_3x_ui() {
@@ -170,6 +166,18 @@ remove_3x_ui() {
             rm -rf /etc/x-ui
         else
             warn "Данные 3x-ui оставлены на месте: /etc/x-ui"
+        fi
+    fi
+    if bool_enabled "${REMOVE_XUI_DATA:-false}"; then
+        backup_file "$XUI_STATE_FILE"
+        backup_file "$XUI_ACCESS_FILE"
+        rm -f "$XUI_STATE_FILE" "$XUI_ACCESS_FILE" "$(dirname "$XUI_STATE_FILE")/settings-before.json"
+    else
+        if command_exists python3; then
+            xui_setup invalidate
+        else
+            rm -f "$XUI_ACCESS_FILE"
+            warn "Python3 не установлен; состояние access.json проверьте вручную"
         fi
     fi
 

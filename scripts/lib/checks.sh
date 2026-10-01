@@ -22,12 +22,36 @@ detect_ssh_ports() {
         return 0
     fi
 
-    if command_exists sshd; then
-        sshd -T 2>/dev/null | awk '/^port / {print $2}' | sort -n | uniq | tr '\n' ' '
-        return 0
+    local ports=""
+    # The active SSH session is authoritative even when sshd runs through
+    # systemd socket activation or a Match block changes sshd -T output.
+    if [[ -n "${SSH_CONNECTION:-}" ]]; then
+        local remote_ip remote_port local_ip local_port
+        read -r remote_ip remote_port local_ip local_port <<< "$SSH_CONNECTION"
+        if [[ "$local_port" =~ ^[0-9]+$ ]]; then
+            ports="$ports $local_port"
+        fi
     fi
 
-    echo "22"
+    if command_exists systemctl; then
+        local sockets
+        sockets="$(systemctl show ssh.socket sshd.socket -p Listen --value 2>/dev/null || true)"
+        ports="$ports $(printf '%s\n' "$sockets" | sed -nE 's/.*:([0-9]+) \(Stream\).*/\1/p' | tr '\n' ' ')"
+    fi
+
+    if command_exists ss; then
+        ports="$ports $(ss -H -ltnp 2>/dev/null | awk '/users:\(\("sshd"/ {port=$4; sub(/^.*:/, "", port); print port}' | tr '\n' ' ')"
+    fi
+
+    if [[ -z "${ports// }" ]] && command_exists sshd; then
+        ports="$ports $(sshd -T 2>/dev/null | awk '/^port / {print $2}' | tr '\n' ' ')"
+    fi
+
+    ports="$(printf '%s\n' $ports | awk '/^[0-9]+$/ && $1 >= 1 && $1 <= 65535' | sort -nu | tr '\n' ' ')"
+    if [[ -z "${ports// }" ]]; then
+        fail "Не удалось определить SSH-порт. Укажите CURRENT_SSH_PORTS в .env перед включением UFW"
+    fi
+    echo "$ports"
 }
 
 require_env() {

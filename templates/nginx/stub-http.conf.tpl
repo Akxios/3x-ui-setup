@@ -1,3 +1,4 @@
+# Managed by 3x-ui-setup
 server {
     listen 80;
     server_name {{DOMAIN}} {{WWW_DOMAIN}};

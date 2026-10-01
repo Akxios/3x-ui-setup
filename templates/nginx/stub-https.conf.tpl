@@ -1,3 +1,4 @@
+# Managed by 3x-ui-setup
 server {
     listen 80;
     server_name {{DOMAIN}} {{WWW_DOMAIN}};
@@ -24,6 +25,7 @@ server {
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options DENY always;
     add_header Referrer-Policy no-referrer-when-downgrade always;
+    add_header Strict-Transport-Security "max-age=31536000" always;
 
     location ~* \.(env|git|htaccess|htpasswd|ini|log|conf)$ {
         deny all;
@@ -36,4 +38,6 @@ server {
     location / {
         try_files $uri $uri/ =404;
     }
+
+{{XUI_PROXY_LOCATIONS}}
 }
