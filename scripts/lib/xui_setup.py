@@ -343,6 +343,15 @@ def configure():
     endpoint = wait_panel(state, current_endpoint())
     api = Panel(endpoint, state["username"], state["password"], state["domain"])
     settings = api.settings()
+    missing = [
+        key for key in ("subJsonEnable", "subClashEnable") if key not in settings
+    ]
+    if missing:
+        raise SetupError(
+            "Эта версия 3x-ui не поддерживает обязательные форматы подписки: "
+            + ", ".join(missing)
+            + ". Используйте поддерживаемую версию 3x-ui."
+        )
     check_ports(state, settings)
     atomic_write(
         state_path().parent / "settings-before.json", json.dumps(settings, indent=2)
@@ -361,8 +370,6 @@ def configure():
         api = Panel(url, state["username"], state["password"], state["domain"])
         actual = api.settings()
         for key, value in desired.items():
-            if key in ("subClashPath", "subClashURI") and key not in actual:
-                continue  # Older versions do not implement Clash subscriptions.
             if actual.get(key) != value:
                 raise SetupError("Настройка не применена: " + key)
     except Exception:

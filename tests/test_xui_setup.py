@@ -158,6 +158,8 @@ class SetupTests(unittest.TestCase):
         settings = {
             "webPort": 2053,
             "subPort": 2096,
+            "subJsonEnable": False,
+            "subClashEnable": False,
             "tgBotEnable": True,
             "unrelated": "keep",
         }
@@ -194,7 +196,12 @@ class SetupTests(unittest.TestCase):
         self.prepare()
         api = Mock()
         api.route = "panel/api/setting/"
-        api.settings.return_value = {"webPort": 2053, "subPort": 2096}
+        api.settings.return_value = {
+            "webPort": 2053,
+            "subPort": 2096,
+            "subJsonEnable": False,
+            "subClashEnable": False,
+        }
         api.request.side_effect = setup.SetupError("API rejected")
         with (
             patch.object(setup, "Panel", return_value=api),
@@ -205,6 +212,25 @@ class SetupTests(unittest.TestCase):
         ):
             with self.assertRaises(setup.SetupError):
                 setup.configure()
+            run.assert_not_called()
+
+    def test_unsupported_clash_version_stops_before_changes(self):
+        self.prepare()
+        api = Mock()
+        api.settings.return_value = {
+            "webPort": 2053,
+            "subPort": 2096,
+            "subJsonEnable": False,
+        }
+        with (
+            patch.object(setup, "Panel", return_value=api),
+            patch.object(setup, "current_endpoint", return_value="http://local/"),
+            patch.object(setup, "wait_panel", return_value="http://local/"),
+            patch.object(setup.subprocess, "run") as run,
+        ):
+            with self.assertRaisesRegex(setup.SetupError, "subClashEnable"):
+                setup.configure()
+            api.request.assert_not_called()
             run.assert_not_called()
 
     def test_proxy_preserves_base_path_and_overrides_blocking_regex(self):
