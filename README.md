@@ -98,7 +98,6 @@ LETSENCRYPT_EMAIL="admin@example.com"
 ```
 
 Полный справочник настроек: [docs/configuration.md](docs/configuration.md).
-Изменения рабочей версии относительно Git: [CHANGELOG.md](CHANGELOG.md).
 
 ## Как проходит установка
 
