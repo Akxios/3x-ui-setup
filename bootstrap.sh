@@ -3,8 +3,9 @@
 set -Eeuo pipefail
 
 REPO_URL="${REPO_URL:-https://github.com/Akxios/3x-ui-setup.git}"
-BOOTSTRAP_URL="${BOOTSTRAP_URL:-https://raw.githubusercontent.com/Akxios/3x-ui-setup/main/bootstrap.sh}"
-INSTALL_DIR="${INSTALL_DIR:-/opt/3x-ui-setup}"
+REPO_BRANCH="${REPO_BRANCH:-legacy}"
+BOOTSTRAP_URL="${BOOTSTRAP_URL:-https://raw.githubusercontent.com/Akxios/3x-ui-setup/legacy/bootstrap.sh}"
+INSTALL_DIR="${INSTALL_DIR:-/opt/3x-ui-setup-legacy}"
 COMMAND="${1:-${COMMAND:-menu}}"
 BOOTSTRAP_LOG="${BOOTSTRAP_LOG:-/tmp/vps-bootstrap-bootstrap.log}"
 
@@ -36,10 +37,20 @@ fi
 if [[ $EUID -ne 0 ]]; then
     if command -v sudo >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
         tmp_script="$(mktemp)"
+
+        cleanup_tmp_script() {
+            rm -f "$tmp_script"
+        }
+
+        trap cleanup_tmp_script EXIT
+
         echo "Запрашиваю root-доступ через sudo..."
+
         curl -fsSL "$BOOTSTRAP_URL" -o "$tmp_script"
+
         exec sudo \
             REPO_URL="$REPO_URL" \
+            REPO_BRANCH="$REPO_BRANCH" \
             BOOTSTRAP_URL="$BOOTSTRAP_URL" \
             INSTALL_DIR="$INSTALL_DIR" \
             BOOTSTRAP_LOG="$BOOTSTRAP_LOG" \
@@ -56,6 +67,7 @@ run_bootstrap_cmd() {
     shift
 
     printf '==> %s\n' "$description"
+
     if "$@" >> "$BOOTSTRAP_LOG" 2>&1; then
         printf 'OK: %s\n' "$description"
     else
@@ -67,17 +79,58 @@ run_bootstrap_cmd() {
 
 prepare_repo() {
     : > "$BOOTSTRAP_LOG"
+
     validate_install_dir
 
-    run_bootstrap_cmd "Подготовка apt" apt-get update
-    run_bootstrap_cmd "Установка базовых утилит" env DEBIAN_FRONTEND=noninteractive apt-get install -y git curl nano ca-certificates
+    run_bootstrap_cmd \
+        "Подготовка apt" \
+        apt-get update
+
+    run_bootstrap_cmd \
+        "Установка базовых утилит" \
+        env DEBIAN_FRONTEND=noninteractive \
+        apt-get install -y git curl nano ca-certificates
 
     if [[ -d "$INSTALL_DIR/.git" ]]; then
         cd "$INSTALL_DIR"
-        run_bootstrap_cmd "Обновление репозитория" git pull --ff-only
+
+        current_origin="$(git remote get-url origin 2>/dev/null || true)"
+
+        if [[ "$current_origin" != "$REPO_URL" ]]; then
+            echo "ОШИБКА: origin существующего репозитория не совпадает."
+            echo "Ожидалось: $REPO_URL"
+            echo "Получено:  ${current_origin:-<нет origin>}"
+            exit 1
+        fi
+
+        run_bootstrap_cmd \
+            "Получение ветки ${REPO_BRANCH}" \
+            git fetch origin "$REPO_BRANCH"
+
+        if git show-ref --verify --quiet "refs/heads/${REPO_BRANCH}"; then
+            run_bootstrap_cmd \
+                "Переключение на ветку ${REPO_BRANCH}" \
+                git checkout "$REPO_BRANCH"
+        else
+            run_bootstrap_cmd \
+                "Создание локальной ветки ${REPO_BRANCH}" \
+                git checkout -b "$REPO_BRANCH" "origin/$REPO_BRANCH"
+        fi
+
+        run_bootstrap_cmd \
+            "Обновление ветки ${REPO_BRANCH}" \
+            git pull --ff-only origin "$REPO_BRANCH"
     else
         rm -rf "$INSTALL_DIR"
-        run_bootstrap_cmd "Клонирование репозитория" git clone "$REPO_URL" "$INSTALL_DIR"
+
+        run_bootstrap_cmd \
+            "Клонирование ветки ${REPO_BRANCH}" \
+            git clone \
+                --branch "$REPO_BRANCH" \
+                --single-branch \
+                "$REPO_URL" \
+                "$INSTALL_DIR"
+
         cd "$INSTALL_DIR"
     fi
 
@@ -115,6 +168,7 @@ configure_minimal_env() {
 
     while true; do
         read -r -p "Домен [${DOMAIN:-example.com}]: " value
+
         if [[ -n "$value" ]]; then
             DOMAIN="$value"
         fi
@@ -128,16 +182,19 @@ configure_minimal_env() {
     done
 
     read -r -p "Email для Let's Encrypt [${LETSENCRYPT_EMAIL:-admin@example.com}]: " value
+
     if [[ -n "$value" ]]; then
         set_env_value LETSENCRYPT_EMAIL "$value"
     fi
 
     read -r -p "Xray TCP порт [${XRAY_TCP_PORTS:-8443}]: " value
+
     if [[ -n "$value" ]]; then
         set_env_value XRAY_TCP_PORTS "$value"
     fi
 
     read -r -p "Устанавливать 3x-ui? [Y/n] " value
+
     case "$value" in
         n|N|no|NO|No)
             set_env_value INSTALL_3X_UI "false"
@@ -152,6 +209,7 @@ maybe_edit_env() {
     local value
 
     read -r -p "Открыть полный .env в редакторе? [y/N] " value
+
     if [[ "$value" =~ ^[Yy]$ ]]; then
         "${EDITOR:-nano}" .env
     fi
@@ -166,7 +224,9 @@ install_flow() {
     else
         echo
         echo "Текущий домен в .env: ${DOMAIN}"
+
         read -r -p "Использовать текущую конфигурацию? [Y/n] " reply
+
         if [[ "$reply" =~ ^[Nn]$ ]]; then
             configure_minimal_env
         fi
@@ -176,6 +236,7 @@ install_flow() {
 
     echo
     read -r -p "Начать установку? [y/N] " reply
+
     if [[ ! "$reply" =~ ^[Yy]$ ]]; then
         echo "Установка отменена."
         echo "Продолжить позже: sudo bash scripts/install.sh all"
@@ -189,7 +250,9 @@ show_menu() {
     while true; do
         cat <<EOF
 
-VPS Bootstrap
+VPS Bootstrap Legacy
+Ветка: ${REPO_BRANCH}
+
 1) Установить / обновить сервер
 2) Открыть .env
 3) Удалить сервисы

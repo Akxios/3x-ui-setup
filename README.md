@@ -56,7 +56,7 @@
 ### 1) Bootstrap с меню
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Akxios/3x-ui-setup/main/bootstrap.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/Akxios/3x-ui-setup/legacy/bootstrap.sh)
 ```
 
 Bootstrap скачает репозиторий в `/opt/3x-ui-setup`, создаст `.env` из `.env.example`, откроет меню и предложит минимальную настройку.
@@ -74,13 +74,13 @@ Bootstrap скачает репозиторий в `/opt/3x-ui-setup`, созд�
 ### 2) Установка без меню
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Akxios/3x-ui-setup/main/bootstrap.sh) install
+bash <(curl -fsSL https://raw.githubusercontent.com/Akxios/3x-ui-setup/legacy/bootstrap.sh) install
 ```
 
 ### 3) Локальный запуск из клона
 
 ```bash
-git clone https://github.com/Akxios/3x-ui-setup.git
+git clone https://github.com/Akxios/legacy/3x-ui-setup.git
 cd 3x-ui-setup
 cp .env.example .env
 nano .env
@@ -168,7 +168,7 @@ NGINX_CERT_KEY_PATH="/path/to/privkey.pem"
 Интерактивное удаление через bootstrap:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Akxios/3x-ui-setup/main/bootstrap.sh) remove
+bash <(curl -fsSL https://raw.githubusercontent.com/Akxios/3x-ui-setup/legacy/bootstrap.sh) remove
 ```
 
 Локально после установки:
