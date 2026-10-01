@@ -1,0 +1,70 @@
+# Эксплуатация и диагностика
+
+[README](../README.md) · [Установка](installation.md) · [Настройки `.env`](configuration.md) · [Безопасность](security.md)
+
+## Повторный запуск
+
+Из каталога проекта запустите нужный модуль или всю установку:
+
+```bash
+sudo bash scripts/install.sh all
+sudo bash scripts/install.sh nginx
+sudo bash scripts/install.sh firewall
+sudo bash scripts/install.sh fail2ban
+sudo bash scripts/install.sh 3x-ui
+```
+
+Повторный запуск сохраняет действующие учётные данные и пути панели/подписок. Установщик управляет только nginx-конфигом с первой строкой `# Managed by 3x-ui-setup`; чужой сайт с тем же именем не перезаписывает. Для старого конфига проекта без маркера сначала проверьте его содержимое, затем добавьте маркер вручную. Fail2Ban использует отдельный файл проекта и сохраняет пользовательский `jail.local`.
+
+Если сертификат уже есть, nginx продолжает обслуживать HTTPS при повторной настройке. При ошибке нового конфига или Certbot прежний конфиг восстанавливается. Существующую панель 3x-ui скрипт настраивает только после проверки реквизитов; изменение версии официального installer требует совместимого API и нового SHA-256.
+
+## Доступ и состояние
+
+```bash
+sudo bash scripts/install.sh access
+sudo bash scripts/install.sh status
+```
+
+`access` показывает карточку с адресами, логином и паролем из закрытого `/etc/3x-ui-setup/access.json`. После ручной смены пароля обновите `XUI_USERNAME` и `XUI_PASSWORD` в `.env`: карточка сама не узнаёт новый пароль. Команда `status` показывает краткое состояние служб; для подробного вывода задайте `VERBOSE="true"` в `.env`.
+
+## Логи
+
+| Место | Содержимое |
+| --- | --- |
+| `/root/vps-bootstrap-summary.txt` | Итог основной установки |
+| `/var/log/vps-bootstrap/` | Логи шагов, а также отдельный закрытый transcript installer 3x-ui |
+| `/root/3x-ui-access.txt` | Закрытая карточка после успешной проверки |
+
+Команды `status` и `remove` создают отдельные summary в каталоге логов. При `VERBOSE=false` подробности пишутся в лог; при `VERBOSE=true` вывод команд также показывается в терминале. Transcript официального installer в автоматическом режиме остаётся закрытым независимо от `VERBOSE`.
+
+## Сертификат Let’s Encrypt
+
+Сначала проверьте A/AAAA-записи домена, внешний firewall провайдера и доступ к `80/tcp` из интернета. HTTP-01 проверка обращается к `http://DOMAIN/.well-known/acme-challenge/<токен>`; наличие сертификата не определяется одной только командой `nginx -t`.
+
+Перед Certbot установщик создаёт проверочный файл и запрашивает его через локальный nginx на IPv4 и доступном IPv6 для каждого имени сертификата. Если локальная проверка проходит, а Certbot отвечает `unauthorized`, запрос может попадать на другой IP, внешний прокси или иной HTTP-сайт. Проверяйте ответ домена с другого компьютера и лог установки. Временный конфиг при ошибке откатывается, поэтому последующий `nginx -T` может снова показывать только старые сайты.
+
+Для проверки состояния служб и правил:
+
+```bash
+sudo nginx -t
+systemctl status nginx --no-pager -l
+sudo ufw status verbose
+sudo fail2ban-client status
+systemctl status x-ui --no-pager -l
+```
+
+Не публикуйте полный `.env`, карточку доступа или полный вывод nginx, если в них могут быть секреты.
+
+## Удаление
+
+Удалить отдельный компонент или все управляемые компоненты:
+
+```bash
+sudo bash scripts/install.sh remove nginx
+sudo bash scripts/install.sh remove fail2ban
+sudo bash scripts/install.sh remove 3x-ui
+sudo bash scripts/install.sh remove ufw
+sudo bash scripts/install.sh remove all
+```
+
+`sudo bash scripts/install.sh remove` открывает интерактивное меню. По умолчанию web-root, сертификаты, данные 3x-ui и apt-пакеты сохраняются. Для их удаления включите нужные флаги в `.env`: `REMOVE_WEB_ROOT`, `REMOVE_CERTBOT_CERT`, `REMOVE_XUI_DATA`, `PURGE_PACKAGES`. `REMOVE_CONFIRM=true` отключает подтверждения. Удаление web-root разрешено только для стандартного каталога домена со страницей проекта и без пользовательских файлов; подробности — в [справочнике](configuration.md#удаление).
