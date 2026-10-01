@@ -26,9 +26,11 @@ valid_domain() {
 if [[ "$COMMAND" == "help" || "$COMMAND" == "-h" || "$COMMAND" == "--help" ]]; then
     cat <<EOF
 Использование:
+  sudo bash bootstrap.sh [install|remove|status|access]
   sudo env REPO_COMMIT=<полный-SHA-коммита> bash bootstrap.sh [install|remove|status|access]
 
-Скачивайте bootstrap.sh из того же commit SHA, что указан в REPO_COMMIT.
+REPO_COMMIT необязателен. Для закреплённой установки скачайте bootstrap.sh
+из того же коммита, что указан в REPO_COMMIT.
 
 ASSUME_YES=true — установка без вопросов с уже заполненным .env.
 EOF
@@ -53,7 +55,7 @@ if [[ $EUID -ne 0 ]]; then
     fi
 
     echo "ОШИБКА: запустите от root"
-    echo "Пример: sudo env REPO_COMMIT=<полный-SHA> bash bootstrap.sh install"
+    echo "Пример: sudo bash bootstrap.sh install"
     exit 1
 fi
 

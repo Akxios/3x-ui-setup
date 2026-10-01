@@ -14,7 +14,15 @@
 
 ## 2. Выберите способ запуска
 
-### Bootstrap из проверенного коммита
+### Обычная установка: одна команда
+
+```bash
+curl -fsSLo bootstrap.sh https://raw.githubusercontent.com/Akxios/3x-ui-setup/main/bootstrap.sh && sudo bash bootstrap.sh install
+```
+
+Bootstrap установит базовые утилиты, создаст `/opt/3x-ui-setup/.env` и спросит домен, email и несколько базовых настроек. После подтверждения он выполнит установку. SHA вводить не нужно. Команда загружает актуальный `main` и сразу запускает его от root; если хотите проверить код до запуска, скачайте `bootstrap.sh` отдельно.
+
+### Установка по конкретному коммиту
 
 Замените значение `SHA` на полный 40-символьный SHA проверенного коммита. Файл bootstrap и checkout проекта должны иметь один и тот же SHA:
 
@@ -25,7 +33,7 @@ curl -fsSLo bootstrap.sh "https://raw.githubusercontent.com/Akxios/3x-ui-setup/$
 sudo env REPO_COMMIT="$SHA" bash bootstrap.sh
 ```
 
-Bootstrap установит базовые утилиты, закрепит checkout в `/opt/3x-ui-setup`, создаст `.env` и предложит меню. Для уже заполненного `/opt/3x-ui-setup/.env` можно запустить без вопросов:
+В этом режиме bootstrap закрепит checkout в `/opt/3x-ui-setup` за выбранным коммитом. Для уже заполненного `/opt/3x-ui-setup/.env` можно запустить без вопросов:
 
 ```bash
 sudo env REPO_COMMIT="$SHA" ASSUME_YES=true bash bootstrap.sh install

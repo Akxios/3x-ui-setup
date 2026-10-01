@@ -23,16 +23,13 @@
 
 Нужны root-доступ к VPS, домен с A/AAAA-записями на этот сервер и доступные извне `80/tcp` и `443/tcp`. Проверьте текущий SSH-порт перед включением UFW. Подробная подготовка — в [руководстве по установке](docs/installation.md).
 
-Скачайте bootstrap из **проверенного коммита** и передайте тот же SHA для установки репозитория:
+Запустите установку одной командой:
 
 ```bash
-SHA="PASTE_40_CHARACTER_COMMIT_SHA"
-curl -fsSLo bootstrap.sh "https://raw.githubusercontent.com/Akxios/3x-ui-setup/${SHA}/bootstrap.sh"
-# Проверьте скачанный файл перед запуском от root.
-sudo env REPO_COMMIT="$SHA" bash bootstrap.sh
+curl -fsSLo bootstrap.sh https://raw.githubusercontent.com/Akxios/3x-ui-setup/main/bootstrap.sh && sudo bash bootstrap.sh install
 ```
 
-Bootstrap установит базовые утилиты, создаст `/opt/3x-ui-setup/.env` и откроет меню настройки. Для самостоятельного локального запуска:
+Bootstrap установит базовые утилиты, создаст `/opt/3x-ui-setup/.env`, спросит домен и email, затем запустит установку. Эта команда получает актуальный `main`; для установки конкретной версии по SHA смотрите [подробное руководство](docs/installation.md#установка-по-конкретному-коммиту). Для самостоятельного локального запуска:
 
 ```bash
 git clone https://github.com/Akxios/3x-ui-setup.git
