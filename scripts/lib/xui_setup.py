@@ -95,7 +95,9 @@ def current_endpoint():
     if not match_port or not match_path:
         raise SetupError("Не удалось прочитать текущий порт и путь 3x-ui")
     cert = subprocess.check_output([binary, "setting", "-getCert"], text=True)
-    scheme = "https" if re.search(r"^cert:\s*\S+", cert, re.M) else "http"
+    # Only horizontal whitespace is allowed after cert:. \s also consumes the
+    # newline and mistakes the following key: line for a certificate value.
+    scheme = "https" if re.search(r"^cert:[ \t]*\S+", cert, re.M) else "http"
     return f"{scheme}://127.0.0.1:{port(match_port[1])}" + existing_path(match_path[1])
 
 

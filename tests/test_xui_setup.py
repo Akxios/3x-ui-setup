@@ -41,6 +41,30 @@ class SetupTests(unittest.TestCase):
             setup.prepare()
         return setup.load_state()
 
+    def test_current_endpoint_uses_http_when_certificate_is_empty(self):
+        with patch.object(
+            setup.subprocess,
+            "check_output",
+            side_effect=[
+                "port: 2053\nwebBasePath: /private/\n",
+                "cert: \nkey: \n",
+            ],
+        ):
+            self.assertEqual(setup.current_endpoint(), "http://127.0.0.1:2053/private/")
+
+    def test_current_endpoint_uses_https_when_certificate_is_set(self):
+        with patch.object(
+            setup.subprocess,
+            "check_output",
+            side_effect=[
+                "port: 2053\nwebBasePath: /private/\n",
+                "cert: /etc/letsencrypt/live/example/fullchain.pem\nkey: /etc/letsencrypt/live/example/privkey.pem\n",
+            ],
+        ):
+            self.assertEqual(
+                setup.current_endpoint(), "https://127.0.0.1:2053/private/"
+            )
+
     def test_generated_credentials_survive_retry_and_files_are_private(self):
         first = self.prepare()
         second = self.prepare()
