@@ -12,6 +12,11 @@ server {
     add_header X-Frame-Options DENY always;
     add_header Referrer-Policy no-referrer-when-downgrade always;
 
+    location ^~ /.well-known/acme-challenge/ {
+        default_type text/plain;
+        try_files $uri =404;
+    }
+
     location ~* \.(env|git|htaccess|htpasswd|ini|log|conf)$ {
         deny all;
     }

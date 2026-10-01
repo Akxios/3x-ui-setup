@@ -3,7 +3,15 @@ server {
     listen 80;
     server_name {{DOMAIN}} {{WWW_DOMAIN}};
 
-    return 301 https://$host$request_uri;
+    location ^~ /.well-known/acme-challenge/ {
+        root {{WEB_ROOT}};
+        default_type text/plain;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
 }
 
 server {

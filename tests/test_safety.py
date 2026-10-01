@@ -172,6 +172,10 @@ nginx_site_guard""")
         self.command("nginx", "exit 0")
         self.command("systemctl", "exit 0")
         self.command("certbot", "exit 1")
+        self.command(
+            "curl",
+            'for url do :; done\ncat "$WEB_ROOT/.well-known/acme-challenge/${url##*/}"',
+        )
         site = Path(self.env["NGINX_SITE_DIR"]) / self.env["DOMAIN"]
         site.write_text("# Managed by 3x-ui-setup\nPREVIOUS HTTPS\n")
         (Path(self.env["NGINX_ENABLED_DIR"]) / self.env["DOMAIN"]).symlink_to(site)
@@ -196,6 +200,39 @@ source "$SCRIPT_DIR/modules/20-nginx.sh"''',
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(site.read_text(), "# Managed by 3x-ui-setup\nPREVIOUS HTTPS\n")
         self.assertEqual((webroot / "index.html").read_text(), "keep website")
+
+    def test_acme_probe_stops_before_certbot_and_restores_site(self):
+        self.command("nginx", "exit 0")
+        self.command("systemctl", "exit 0")
+        self.command("curl", "printf 'wrong website'")
+        self.command("certbot", 'echo called > "$OPERATIONS"')
+        site = Path(self.env["NGINX_SITE_DIR"]) / self.env["DOMAIN"]
+        site.write_text("# Managed by 3x-ui-setup\nPREVIOUS HTTPS\n")
+        (Path(self.env["NGINX_ENABLED_DIR"]) / self.env["DOMAIN"]).symlink_to(site)
+        webroot = self.base / "webroot"
+        result = self.bash(
+            '''source "$SCRIPT_DIR/lib/common.sh"
+source "$SCRIPT_DIR/lib/nginx-site.sh"
+install_packages_if_missing() { :; }
+render_template() { cp "$1" "$2"; }
+source "$SCRIPT_DIR/modules/20-nginx.sh"''',
+            {
+                "WEB_ROOT": str(webroot),
+                "NGINX_AUTO_HTTPS": "true",
+                "NGINX_USE_HTTPS": "false",
+                "NGINX_CERT_PATH": str(self.base / "missing.pem"),
+                "NGINX_CERT_KEY_PATH": str(self.base / "missing-key.pem"),
+                "LETSENCRYPT_EMAIL": "admin@example.org",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Проверка HTTP-маршрута", result.stderr)
+        self.assertEqual(site.read_text(), "# Managed by 3x-ui-setup\nPREVIOUS HTTPS\n")
+        self.assertFalse(Path(self.env["OPERATIONS"]).exists())
+        self.assertEqual(webroot.stat().st_mode & 0o777, 0o755)
+        self.assertEqual(
+            (webroot / ".well-known/acme-challenge").stat().st_mode & 0o777, 0o755
+        )
 
     def test_old_placeholder_is_upgraded_but_custom_website_is_preserved(self):
         self.command("nginx", "exit 0")
