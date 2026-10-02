@@ -40,6 +40,14 @@ nginx_apply_template() {
         fail "Не удалось подготовить nginx-конфиг"
     fi
     chmod 644 "$staged"
+    if [[ "$had_site" == true && "$had_link" == true ]] &&
+        cmp -s "$staged" "$site_file" &&
+        nginx -t >> "$LOG_FILE" 2>&1 &&
+        systemctl is-active --quiet nginx && nginx_site_loaded; then
+        rm -f "$staged" "$backup"
+        ok "nginx-конфиг уже актуален"
+        return 0
+    fi
     mv -f "$staged" "$site_file"
     ln -sfn "$site_file" "$enabled_file"
 
@@ -67,11 +75,16 @@ nginx_apply_template() {
 nginx_restore_snapshot() {
     local snapshot="$1"
     local existed="$2"
+    local was_enabled="${3:-true}"
     local site_file="${NGINX_SITE_DIR:-/etc/nginx/sites-available}/${DOMAIN}"
     local enabled_file="${NGINX_ENABLED_DIR:-/etc/nginx/sites-enabled}/${DOMAIN}"
     if [[ "$existed" == true ]]; then
         cp -p "$snapshot" "$site_file"
-        ln -sfn "$site_file" "$enabled_file"
+        if [[ "$was_enabled" == true ]]; then
+            ln -sfn "$site_file" "$enabled_file"
+        else
+            rm -f "$enabled_file"
+        fi
     else
         rm -f "$site_file" "$enabled_file"
     fi

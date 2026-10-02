@@ -16,6 +16,7 @@ usage_remove() {
   REMOVE_WEB_ROOT=true       удалить ${WEB_ROOT}
   REMOVE_CERTBOT_CERT=true   удалить сертификат certbot для ${DOMAIN}
   REMOVE_XUI_DATA=true       удалить /etc/x-ui
+  REMOVE_UFW_DISABLE=true    отключить UFW, только если он был включён проектом
   PURGE_PACKAGES=true        удалить apt-пакеты nginx/fail2ban/ufw
   REMOVE_CONFIRM=true        не спрашивать подтверждение
 EOF
@@ -144,8 +145,36 @@ remove_nginx() {
     local site_file="/etc/nginx/sites-available/${DOMAIN}"
     local enabled_file="/etc/nginx/sites-enabled/${DOMAIN}"
 
+    local snapshot
+    snapshot="$(mktemp)"
+    local site_was_enabled=false
+    if [[ -L "$enabled_file" ]]; then site_was_enabled=true; fi
+    if [[ -f "$site_file" ]]; then cp -p "$site_file" "$snapshot"; fi
     backup_file "$site_file"
     rm -f "$enabled_file" "$site_file"
+
+    if command_exists nginx && ! nginx -t >> "$LOG_FILE" 2>&1; then
+        if [[ -s "$snapshot" ]]; then
+            cp -p "$snapshot" "$site_file"
+        fi
+        if [[ "$site_was_enabled" == true ]]; then ln -sfn "$site_file" "$enabled_file"; fi
+        rm -f "$snapshot"
+        fail "После удаления сайта nginx -t завершился с ошибкой; прежний сайт восстановлен. Проверьте $LOG_FILE"
+    fi
+    if command_exists nginx && systemctl is-active --quiet nginx &&
+        ! systemctl reload nginx >> "$LOG_FILE" 2>&1; then
+        if [[ -s "$snapshot" ]]; then
+            cp -p "$snapshot" "$site_file"
+        fi
+        if [[ "$site_was_enabled" == true ]]; then
+            ln -sfn "$site_file" "$enabled_file"
+            nginx -t >> "$LOG_FILE" 2>&1 && systemctl reload nginx >> "$LOG_FILE" 2>&1 ||
+                warn "После отката nginx требует ручной проверки"
+        fi
+        rm -f "$snapshot"
+        fail "Nginx не перезагрузился после удаления сайта; прежний сайт восстановлен. Проверьте $LOG_FILE"
+    fi
+    rm -f "$snapshot"
 
     if bool_enabled "${REMOVE_WEB_ROOT:-false}"; then
         backup_file "$WEB_ROOT"
@@ -158,11 +187,6 @@ remove_nginx() {
         certbot delete --cert-name "$DOMAIN" --non-interactive || true
     fi
 
-    if command_exists nginx; then
-        nginx -t || true
-        systemctl reload nginx || systemctl restart nginx || true
-    fi
-
     purge_packages_if_requested nginx certbot
     ok "nginx-конфиг удалён"
 }
@@ -173,11 +197,24 @@ remove_fail2ban() {
     if [[ -f "$jail_file" ]]; then
         grep -qx '# Managed by 3x-ui-setup' "$jail_file" || fail "Jail не создан этим проектом: $jail_file"
         backup_file "$jail_file"
+        local jail_snapshot
+        jail_snapshot="$(mktemp)"
+        cp -p "$jail_file" "$jail_snapshot"
         rm -f "$jail_file"
         if command_exists fail2ban-client; then
-            fail2ban-client -t || fail "Оставшаяся конфигурация Fail2Ban некорректна"
-            systemctl restart fail2ban || fail "Не удалось перезапустить Fail2Ban"
+            if ! fail2ban-client -t; then
+                cp -p "$jail_snapshot" "$jail_file"
+                rm -f "$jail_snapshot"
+                fail "Оставшаяся конфигурация Fail2Ban некорректна; jail проекта восстановлен"
+            fi
+            if ! systemctl restart fail2ban; then
+                cp -p "$jail_snapshot" "$jail_file"
+                systemctl restart fail2ban || warn "После отката Fail2Ban требует ручной проверки"
+                rm -f "$jail_snapshot"
+                fail "Fail2Ban не перезапустился; jail проекта восстановлен"
+            fi
         fi
+        rm -f "$jail_snapshot"
     fi
     ok "Fail2Ban jail проекта удалён"
 }
@@ -185,8 +222,13 @@ remove_fail2ban() {
 remove_3x_ui() {
     confirm_remove "3x-ui / x-ui"
 
-    systemctl stop x-ui >/dev/null 2>&1 || true
-    systemctl disable x-ui >/dev/null 2>&1 || true
+    systemctl stop x-ui >/dev/null 2>&1 || {
+        systemctl is-active --quiet x-ui && fail "Не удалось остановить x-ui; файлы не удалялись"
+    }
+    if systemctl is-active --quiet x-ui || { command_exists pgrep && pgrep -x x-ui >/dev/null; }; then
+        fail "Процесс x-ui всё ещё работает; файлы не удалялись"
+    fi
+    systemctl disable x-ui >/dev/null 2>&1 || warn "Не удалось отключить автозапуск x-ui"
 
     if [[ -d /etc/x-ui ]]; then
         backup_file /etc/x-ui
@@ -201,7 +243,7 @@ remove_3x_ui() {
             "$XUI_ACCESS_FILE" == /root/3x-ui-access.txt ]]; then
             backup_file "$XUI_STATE_FILE"
             backup_file "$XUI_ACCESS_FILE"
-            rm -f "$XUI_STATE_FILE" "$XUI_ACCESS_FILE" /etc/3x-ui-setup/settings-before.json
+            rm -f "$XUI_STATE_FILE" "${XUI_STATE_FILE}.pending" "$XUI_ACCESS_FILE" /etc/3x-ui-setup/settings-before.json
         else
             warn "Нестандартные файлы XUI_STATE_FILE/XUI_ACCESS_FILE сохранены; удалите их вручную после проверки"
         fi
@@ -223,11 +265,16 @@ remove_3x_ui() {
 }
 
 remove_firewall() {
+    if ! bool_enabled "${REMOVE_UFW_DISABLE:-false}"; then
+        warn "UFW оставлен включённым. Для отключения UFW, ранее включённого проектом, задайте REMOVE_UFW_DISABLE=true"
+        return 0
+    fi
+    [[ -f /etc/3x-ui-setup/ufw-enabled-by-project && ! -L /etc/3x-ui-setup/ufw-enabled-by-project ]] ||
+        fail "UFW не был включён проектом; автоматическое отключение запрещено"
     confirm_remove "UFW"
-
-    ufw --force disable || true
+    ufw --force disable || fail "Не удалось отключить UFW"
+    rm -f /etc/3x-ui-setup/ufw-enabled-by-project
     purge_packages_if_requested ufw
-
     ok "UFW отключён"
 }
 

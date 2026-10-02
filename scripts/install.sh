@@ -104,6 +104,7 @@ apply_env_defaults() {
     set_default REMOVE_WEB_ROOT "false"
     set_default REMOVE_CERTBOT_CERT "false"
     set_default REMOVE_XUI_DATA "false"
+    set_default REMOVE_UFW_DISABLE "false"
     set_default PURGE_PACKAGES "false"
     set_default REMOVE_CONFIRM "false"
 
@@ -154,22 +155,100 @@ validate_env() {
     validate_bool REMOVE_WEB_ROOT
     validate_bool REMOVE_CERTBOT_CERT
     validate_bool REMOVE_XUI_DATA
+    validate_bool REMOVE_UFW_DISABLE
     validate_bool PURGE_PACKAGES
     validate_bool REMOVE_CONFIRM
     validate_bool VERBOSE
 
-    if [[ "$command" == "all" || "$command" == "nginx" ]] &&
+    if [[ "$command" == "all" || "$command" == "nginx" || "$command" == "preflight" ]] &&
         bool_enabled "${ENABLE_NGINX:-true}" &&
         bool_enabled "${NGINX_AUTO_HTTPS:-true}"; then
         require_env LETSENCRYPT_EMAIL
     fi
 
-    if [[ "$command" == "all" || "$command" == "3x-ui" || "$command" == "x-ui" ]] &&
+    if [[ "$command" == "all" || "$command" == "3x-ui" || "$command" == "x-ui" || "$command" == "upgrade-3x-ui" ]] &&
         bool_enabled "${INSTALL_3X_UI:-false}"; then
         require_env THREE_X_UI_INSTALL_URL
         require_env THREE_X_UI_INSTALL_SHA256
         [[ "$THREE_X_UI_INSTALL_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || fail "THREE_X_UI_INSTALL_SHA256 должен быть SHA-256 (64 hex-символа)"
     fi
+    if [[ "$command" != status && "$command" != remove && "$command" != delete && "$command" != uninstall ]]; then
+        validate_install_settings
+    fi
+}
+
+acquire_install_lock() {
+    command_exists flock || fail "Для защиты от параллельной установки нужен flock (пакет util-linux)"
+    local lock_file="/run/3x-ui-setup.lock"
+    [[ ! -L "$lock_file" ]] || fail "Файл блокировки не должен быть символьной ссылкой"
+    exec {INSTALL_LOCK_FD}>"$lock_file"
+    flock -n "$INSTALL_LOCK_FD" || fail "Другой экземпляр 3x-ui-setup уже меняет сервер"
+}
+
+preflight_install() {
+    local command="${1:-all}"
+    local LOG_FILE="${LOG_FILE:-${LOG_DIR}/preflight.log}"
+    local SUMMARY_FILE="${SUMMARY_FILE:-/root/vps-bootstrap-summary.txt}"
+    validate_runtime_paths
+    if [[ "$command" == all || "$command" == firewall || "$command" == ufw ||
+        "$command" == 3x-ui || "$command" == x-ui || "$command" == upgrade-3x-ui || "$command" == preflight ]] &&
+        bool_enabled "$ENABLE_UFW"; then
+        local ssh_ports
+        ssh_ports="$(detect_ssh_ports)"
+        [[ -n "$ssh_ports" ]] || fail "Не удалось определить SSH-порт"
+        ok "SSH-порты для UFW: $ssh_ports"
+    fi
+    if [[ "$command" == all || "$command" == 3x-ui || "$command" == x-ui ||
+        "$command" == upgrade-3x-ui || "$command" == preflight ]] &&
+        bool_enabled "$INSTALL_3X_UI" && bool_enabled "$XUI_AUTO_CONFIGURE"; then
+        bool_enabled "$ENABLE_NGINX" || fail "Автонастройке 3x-ui нужен nginx"
+        bool_enabled "$ENABLE_UFW" || fail "Автонастройке 3x-ui нужен UFW"
+        [[ "$UFW_DEFAULT_INCOMING" == deny && "$UFW_DEFAULT_OUTGOING" == allow ]] ||
+            fail "Автонастройке 3x-ui нужны UFW incoming=deny и outgoing=allow"
+        ! bool_enabled "$UFW_RESET_RULES" || fail "Автонастройка не допускает сброс UFW"
+        bool_enabled "$NGINX_AUTO_HTTPS" || bool_enabled "$NGINX_USE_HTTPS" ||
+            fail "Автонастройке 3x-ui нужен HTTPS nginx"
+    fi
+    if [[ "$command" == nginx || "$command" == 3x-ui || "$command" == x-ui ||
+        "$command" == upgrade-3x-ui || "$command" == preflight ]] &&
+        bool_enabled "$NGINX_USE_HTTPS"; then
+        [[ -f "$NGINX_CERT_PATH" && -f "$NGINX_CERT_KEY_PATH" ]] ||
+            fail "NGINX_USE_HTTPS=true, но файлы сертификата не найдены"
+    fi
+    if command_exists ss; then
+        local port
+        if [[ "$command" == all || "$command" == nginx || "$command" == preflight ]] &&
+            bool_enabled "$ENABLE_NGINX"; then
+            for port in 80 443; do
+                if ss -H -ltnp 2>/dev/null | awk -v target=":$port" '$4 ~ target"$" && $0 !~ /"nginx"/ {found=1} END {exit !found}'; then
+                    fail "Порт $port/tcp занят не nginx; освободите его до установки"
+                fi
+            done
+        fi
+        if [[ "$command" == all || "$command" == 3x-ui || "$command" == x-ui ||
+            "$command" == upgrade-3x-ui || "$command" == preflight ]] &&
+            bool_enabled "$INSTALL_3X_UI" && bool_enabled "$XUI_AUTO_CONFIGURE"; then
+            local saved_panel_port="" saved_sub_port="" saved_ports=""
+            if [[ -f "$XUI_STATE_FILE" || -f "${XUI_STATE_FILE}.pending" ]]; then
+                saved_ports="$(xui_setup ports)" || fail "Не удалось прочитать сохранённые порты 3x-ui"
+                read -r saved_panel_port saved_sub_port <<< "$saved_ports"
+            fi
+            for port in "${XUI_PANEL_PORT:-${saved_panel_port:-2053}}" "${XUI_SUB_PORT:-${saved_sub_port:-2096}}"; do
+                if ss -H -ltnp 2>/dev/null | awk -v target=":$port" '$4 ~ target"$" && $0 !~ /"x-ui"/ {found=1} END {exit !found}'; then
+                    fail "Локальный порт 3x-ui $port/tcp занят другим процессом"
+                fi
+            done
+        fi
+    else
+        warn "ss пока не установлен; конфликты портов будут проверены после установки iproute2"
+    fi
+    local package
+    for package in curl python3 nginx ufw fail2ban certbot; do
+        if ! dpkg -s "$package" >/dev/null 2>&1; then
+            echo "Пакет $package будет установлен"
+        fi
+    done
+    ok "Предварительная проверка настроек пройдена"
 }
 
 run_module() {
@@ -195,6 +274,8 @@ usage() {
   sudo bash scripts/install.sh firewall
   sudo bash scripts/install.sh fail2ban
   sudo bash scripts/install.sh 3x-ui
+  sudo bash scripts/install.sh upgrade-3x-ui
+  sudo bash scripts/install.sh preflight
   sudo bash scripts/install.sh status
   sudo bash scripts/install.sh access
   sudo bash scripts/install.sh remove
@@ -217,6 +298,11 @@ main() {
     esac
 
     require_root
+    case "$command" in
+        all|packages|nginx|firewall|ufw|fail2ban|3x-ui|x-ui|upgrade-3x-ui|remove|delete|uninstall)
+            acquire_install_lock
+            ;;
+    esac
     if [[ "$command" == "access" ]]; then
         if [[ -f "$ENV_FILE" ]]; then
             load_env_file "$ENV_FILE" || fail "Не удалось безопасно загрузить .env"
@@ -232,6 +318,10 @@ main() {
     load_env
     apply_env_defaults
     validate_env "$command"
+    if [[ "$command" != status && "$command" != remove && "$command" != delete && "$command" != uninstall ]]; then
+        preflight_install "$command"
+    fi
+    if [[ "$command" == preflight ]]; then return 0; fi
     init_runtime_files "$command"
     summary_add "Домен: ${DOMAIN}"
     summary_add "Лог: ${LOG_FILE}"
@@ -278,8 +368,25 @@ main() {
                 show_xui_access
             fi
             ;;
+        upgrade-3x-ui)
+            bool_enabled "$INSTALL_3X_UI" || fail "INSTALL_3X_UI=false: обновление отключено"
+            [[ -x /usr/local/x-ui/x-ui ]] || fail "3x-ui ещё не установлен; используйте команду all"
+            prepare_xui
+            XUI_UPGRADE_MODE=true
+            run_module "${SCRIPT_DIR}/modules/50-3x-ui.sh"
+            if ! (run_module "${SCRIPT_DIR}/modules/60-configure-xui.sh"); then
+                if [[ "${XUI_UPGRADE_APPLIED:-false}" == true ]]; then
+                    restore_xui_upgrade_backup
+                fi
+                fail "Обновление 3x-ui не прошло проверку; прежняя версия восстановлена"
+            fi
+            if bool_enabled "$XUI_AUTO_CONFIGURE"; then show_xui_access; fi
+            ;;
         status)
             run_module "${SCRIPT_DIR}/modules/90-status.sh"
+            ;;
+        preflight)
+            return 0
             ;;
         remove|delete|uninstall)
             run_module "${SCRIPT_DIR}/modules/80-remove.sh" "${@:2}"

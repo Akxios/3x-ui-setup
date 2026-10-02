@@ -46,10 +46,11 @@ init_runtime_files() {
         fi
     fi
 
+    validate_runtime_paths
     mkdir -p "$LOG_DIR" "$(dirname "$SUMMARY_FILE")"
+    chmod 700 "$LOG_DIR"
     : > "$LOG_FILE"
     : > "$SUMMARY_FILE"
-    chmod 700 "$LOG_DIR"
     chmod 600 "$LOG_FILE" "$SUMMARY_FILE"
 
     export LOG_DIR LOG_FILE SUMMARY_FILE
@@ -111,10 +112,18 @@ print_summary() {
 
 backup_file() {
     local file="$1"
-    local backup_dir="/root/vps-bootstrap-backups/$(date +%Y%m%d-%H%M%S)"
+    local backup_root="/root/vps-bootstrap-backups"
+    local backup_dir="${backup_root}/$(date +%Y%m%d-%H%M%S)"
 
     if [[ -e "$file" ]]; then
-        mkdir -p "$backup_dir"
+        [[ ! -L "$backup_root" && ( ! -e "$backup_root" || -d "$backup_root" ) ]] ||
+            fail "Каталог резервных копий не должен быть символьной ссылкой"
+        if [[ -d "$backup_root" ]]; then
+            [[ "$(stat -c %u "$backup_root")" == 0 ]] || fail "Каталог резервных копий должен принадлежать root"
+        fi
+        install -d -m 700 "$backup_root"
+        [[ ! -L "$backup_dir" ]] || fail "Каталог резервной копии не должен быть символьной ссылкой"
+        install -d -m 700 "$backup_dir"
         cp -a "$file" "$backup_dir/$(echo "$file" | sed 's#/#_#g')"
         ok "Создан бэкап: $file"
     fi

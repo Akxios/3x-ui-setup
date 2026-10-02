@@ -23,7 +23,7 @@ prepare_xui() {
 }
 
 show_xui_access() {
-    [[ -f "$XUI_STATE_FILE" ]] || fail "Сохранённых реквизитов нет: $XUI_STATE_FILE"
+    [[ -f "$XUI_STATE_FILE" || -f "${XUI_STATE_FILE}.pending" ]] || fail "Сохранённых реквизитов нет: $XUI_STATE_FILE"
     xui_setup access
     printf '\nКарточка доступа: %s\n' "$XUI_ACCESS_FILE"
 }

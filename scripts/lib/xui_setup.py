@@ -39,12 +39,38 @@ def state_path():
     return Path(os.environ.get("XUI_STATE_FILE", "/etc/3x-ui-setup/access.json"))
 
 
+def pending_state_path():
+    path = state_path()
+    return path.with_name(path.name + ".pending")
+
+
 def load_state():
     return json.loads(state_path().read_text())
 
 
+def load_pending_state():
+    return json.loads(pending_state_path().read_text())
+
+
 def save_state(state):
     atomic_write(state_path(), json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+
+
+def save_pending_state(state):
+    atomic_write(
+        pending_state_path(), json.dumps(state, ensure_ascii=False, indent=2) + "\n"
+    )
+
+
+def discard_pending(force=False):
+    if not force:
+        if not state_path().exists() or not pending_state_path().exists():
+            return
+        if load_pending_state().get("service_changed"):
+            raise SetupError(
+                "Откат 3x-ui не подтверждён; промежуточное состояние сохранено"
+            )
+    pending_state_path().unlink(missing_ok=True)
 
 
 def port(value):
@@ -228,8 +254,13 @@ def prepare():
     domain = os.environ["DOMAIN"]
     if not re.fullmatch(r"[A-Za-z0-9.-]+", domain):
         raise SetupError("Некорректный домен")
-    state = load_state() if state_path().exists() else {}
-    previously_verified = state.get("verified") is True
+    active = load_state() if state_path().exists() else {}
+    state = (
+        active.copy()
+        if active
+        else (load_pending_state() if pending_state_path().exists() else {})
+    )
+    previously_verified = active.get("verified") is True
     if state and state["domain"] != domain:
         raise SetupError(
             "DOMAIN отличается от сохранённого. Миграцию домена выполните отдельно."
@@ -302,11 +333,11 @@ def prepare():
     if len({state["panel_path"], *subscription_paths(state)}) != 4:
         raise SetupError("Пути панели и подписок должны различаться")
     check_ports(state, settings)
-    save_state(state)  # Persist generated credentials BEFORE installer starts.
+    save_pending_state(state)  # Persist generated credentials BEFORE installer starts.
 
 
 def run_installer(filename, version):
-    state = load_state()
+    state = load_pending_state()
     env = os.environ.copy()
     env.update(
         XUI_NONINTERACTIVE="1",
@@ -328,6 +359,7 @@ def wait_panel(state, url=None):
     opener = urllib.request.build_opener(
         urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context)
     )
+    last_error = None
     for _ in range(30):
         try:
             with opener.open(
@@ -335,13 +367,23 @@ def wait_panel(state, url=None):
                 timeout=2,
             ):
                 return url
-        except (OSError, urllib.error.URLError):
+        except urllib.error.HTTPError as error:
+            last_error = f"HTTP {error.code}"
+            if error.code in (401, 403, 404):
+                break
             time.sleep(1)
-    raise SetupError("Панель не запустилась за отведённое время")
+        except (OSError, urllib.error.URLError) as error:
+            last_error = type(error).__name__
+            time.sleep(1)
+    raise SetupError(
+        "Панель не ответила по локальному адресу за отведённое время"
+        + (f" (последняя ошибка: {last_error})" if last_error else "")
+        + "; проверьте systemctl status x-ui и journalctl -u x-ui"
+    )
 
 
 def configure():
-    state = load_state()
+    state = load_pending_state()
     endpoint = wait_panel(state, current_endpoint())
     api = Panel(endpoint, state["username"], state["password"], state["domain"])
     settings = api.settings()
@@ -359,10 +401,17 @@ def configure():
         state_path().parent / "settings-before.json", json.dumps(settings, indent=2)
     )
     desired = desired_settings(state)
+    changed = any(settings.get(key) != value for key, value in desired.items())
+    if "trustedProxyCIDRs" in settings:
+        changed = changed or settings["trustedProxyCIDRs"] != "127.0.0.1/32,::1/128"
     # Preserve all unrelated settings, including flags used to retain redacted secrets.
     settings.update(desired)
     if "trustedProxyCIDRs" in settings:
         settings["trustedProxyCIDRs"] = "127.0.0.1/32,::1/128"
+    state["service_changed"] = changed
+    save_pending_state(state)
+    if not changed:
+        return
     attempted = False
     try:
         attempted = True
@@ -387,11 +436,14 @@ def configure():
 
 
 def rollback():
-    state = load_state()
+    state = load_pending_state()
+    if not state.get("service_changed"):
+        return
     before = json.loads((state_path().parent / "settings-before.json").read_text())
     candidates = [
         f"http://127.0.0.1:{state['panel_port']}{state['panel_path']}",
-        f"http://127.0.0.1:{before['webPort']}" + existing_path(before["webBasePath"]),
+        f"http://127.0.0.1:{port(before['webPort'])}"
+        + existing_path(before.get("webBasePath", "/")),
     ]
     if before.get("webCertFile") and before.get("webKeyFile"):
         candidates.append(candidates[-1].replace("http://", "https://", 1))
@@ -404,14 +456,26 @@ def rollback():
             api.settings()
             api.request(api.route + "update", before)
             subprocess.run(["systemctl", "restart", "x-ui"], check=True)
+            state["service_changed"] = False
+            save_pending_state(state)
             return
-        except (OSError, ValueError, SetupError, urllib.error.URLError) as error:
+        except (
+            OSError,
+            ValueError,
+            SetupError,
+            subprocess.SubprocessError,
+            urllib.error.URLError,
+        ) as error:
             last_error = error
     raise SetupError("Не удалось восстановить настройки 3x-ui") from last_error
 
 
 def proxy():
-    state = load_state()
+    state = (
+        load_pending_state()
+        if os.environ.get("XUI_PROXY_PENDING") == "true"
+        else load_state()
+    )
     if state["domain"] != os.environ["DOMAIN"]:
         raise SetupError("Домен сохранённой панели не совпадает с DOMAIN")
     panel_path = base_path(state["panel_path"])
@@ -443,14 +507,16 @@ def proxy():
 
 
 def verify():
-    state = load_state()
+    state = load_pending_state()
     domain = state["domain"]
-    sub_path = subscription_paths(state)[0]
+    sub_path, json_path, clash_path = subscription_paths(state)
     # --resolve exercises nginx routing and real TLS verification locally.
     # This cannot prove that a provider firewall permits external connections.
     for path, route in (
         (state["panel_path"], "panel"),
         (sub_path + "__setup_healthcheck__", "subscription"),
+        (json_path + "__setup_healthcheck__", "subscription"),
+        (clash_path + "__setup_healthcheck__", "subscription"),
     ):
         result = subprocess.run(
             [
@@ -485,10 +551,21 @@ def verify():
     with socket.create_connection(("127.0.0.1", state["sub_port"]), timeout=5):
         pass
     state["verified"] = True
-    atomic_write(
-        os.environ.get("XUI_ACCESS_FILE", "/root/3x-ui-access.txt"), access_text(state)
-    )
-    save_state(state)
+    state.pop("service_changed", None)
+    card_path = Path(os.environ.get("XUI_ACCESS_FILE", "/root/3x-ui-access.txt"))
+    if card_path.is_symlink():
+        raise SetupError("Файл карточки доступа не должен быть символьной ссылкой")
+    previous_card = card_path.read_text() if card_path.exists() else None
+    atomic_write(card_path, access_text(state))
+    try:
+        save_state(state)
+    except Exception:
+        if previous_card is None:
+            card_path.unlink(missing_ok=True)
+        else:
+            atomic_write(card_path, previous_card)
+        raise
+    discard_pending(force=True)
 
 
 def access_text(state):
@@ -558,13 +635,17 @@ def main():
     elif command == "proxy":
         proxy()
     elif command == "ports":
-        state = load_state()
+        state = load_pending_state() if pending_state_path().exists() else load_state()
         print(state["panel_port"], state["sub_port"])
     elif command == "verify":
         verify()
     elif command == "access":
-        print(access_text(load_state()), end="")
+        state = load_state() if state_path().exists() else load_pending_state()
+        print(access_text(state), end="")
+    elif command == "discard":
+        discard_pending()
     elif command == "invalidate":
+        discard_pending(force=True)
         if state_path().exists():
             state = load_state()
             state["verified"] = False

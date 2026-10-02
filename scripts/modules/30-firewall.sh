@@ -63,6 +63,9 @@ for port in ${XRAY_UDP_PORTS:-}; do
     fi
 done
 
+ufw_was_active=false
+if ufw status | grep -q '^Status: active'; then ufw_was_active=true; fi
+
 if bool_enabled "${UFW_RESET_RULES:-false}"; then
     warn "Сброс текущих правил UFW по UFW_RESET_RULES=true"
     run_logged "Сброс правил UFW" ufw --force reset
@@ -96,6 +99,14 @@ run_logged "Включение UFW" ufw --force enable
 run_logged "Перезагрузка UFW" ufw reload
 ufw_status="$(ufw status)"
 printf '%s\n' "$ufw_status" | grep -q '^Status: active' || fail "UFW не активен после настройки"
+if [[ "$ufw_was_active" == false ]]; then
+    marker_dir="/etc/3x-ui-setup"
+    marker_file="$marker_dir/ufw-enabled-by-project"
+    [[ ! -L "$marker_dir" && ! -L "$marker_file" ]] || fail "Маркер UFW не должен быть символьной ссылкой"
+    install -d -m 700 "$marker_dir"
+    : > "$marker_file"
+    chmod 600 "$marker_file"
+fi
 if bool_enabled "${INSTALL_3X_UI:-false}" && bool_enabled "${XUI_AUTO_CONFIGURE:-true}"; then
     for port in "$panel_port" "$sub_port"; do
         printf '%s\n' "$ufw_status" | grep -Fq "3x-ui-setup-local-only-$port" || fail "UFW не содержит запрет прямого доступа к $port/tcp"

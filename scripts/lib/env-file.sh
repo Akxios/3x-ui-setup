@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 
+declare -ag _3XUI_LOADED_ENV_KEYS=()
+
 load_env_file() {
-    local env_path="$1" pairs name value
+    local env_path="$1" pairs name value previous
     [[ -f "$env_path" && ! -L "$env_path" ]] || {
         printf 'ОШИБКА: .env не найден или является символьной ссылкой: %s\n' "$env_path" >&2
         return 1
@@ -16,6 +18,10 @@ load_env_file() {
         rm -f -- "$pairs"
         return 1
     fi
+    for previous in "${_3XUI_LOADED_ENV_KEYS[@]}"; do
+        unset "$previous"
+    done
+    _3XUI_LOADED_ENV_KEYS=()
     while IFS= read -r -d '' name && IFS= read -r -d '' value; do
         [[ "$name" =~ ^[A-Z][A-Z0-9_]*$ ]] || {
             rm -f -- "$pairs"
@@ -24,6 +30,7 @@ load_env_file() {
         }
         printf -v "$name" '%s' "$value"
         export "$name"
+        _3XUI_LOADED_ENV_KEYS+=("$name")
     done < "$pairs"
     rm -f -- "$pairs"
 }

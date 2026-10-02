@@ -19,6 +19,27 @@ validate_install_dir() {
     esac
 }
 
+validate_bootstrap_log() {
+    case "$BOOTSTRAP_LOG" in
+        /var/log/3x-ui-setup-bootstrap.log) ;;
+        /var/log/vps-bootstrap/*.log)
+            [[ "$BOOTSTRAP_LOG" =~ ^/var/log/vps-bootstrap/[A-Za-z0-9._-]+\.log$ ]] || {
+                echo "ОШИБКА: небезопасный BOOTSTRAP_LOG" >&2
+                exit 1
+            }
+            ;;
+        *) echo "ОШИБКА: BOOTSTRAP_LOG должен находиться в /var/log/vps-bootstrap" >&2; exit 1 ;;
+    esac
+    [[ ! -L /var/log && ! -L /var/log/vps-bootstrap && ! -L "$BOOTSTRAP_LOG" ]] || {
+        echo "ОШИБКА: символьная ссылка в пути BOOTSTRAP_LOG" >&2
+        exit 1
+    }
+    if [[ -d /var/log/vps-bootstrap && "$(stat -c %u /var/log/vps-bootstrap)" != 0 ]]; then
+        echo "ОШИБКА: каталог bootstrap-лога должен принадлежать root" >&2
+        exit 1
+    fi
+}
+
 valid_domain() {
     [[ "$1" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$ ]]
 }
@@ -26,8 +47,8 @@ valid_domain() {
 if [[ "$COMMAND" == "help" || "$COMMAND" == "-h" || "$COMMAND" == "--help" ]]; then
     cat <<EOF
 Использование:
-  sudo bash bootstrap.sh [install|remove|status|access]
-  sudo env REPO_COMMIT=<полный-SHA-коммита> bash bootstrap.sh [install|remove|status|access]
+  sudo bash bootstrap.sh [install|preflight|upgrade-3x-ui|remove|status|access]
+  sudo env REPO_COMMIT=<полный-SHA-коммита> bash bootstrap.sh [install|preflight|upgrade-3x-ui|remove|status|access]
 
 REPO_COMMIT необязателен. Для закреплённой установки скачайте bootstrap.sh
 из того же коммита, что указан в REPO_COMMIT.
@@ -59,6 +80,18 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+case "$COMMAND" in
+    status|access|remove|delete|uninstall|preflight|upgrade-3x-ui)
+        validate_install_dir
+        [[ ! -L "$INSTALL_DIR" && -f "$INSTALL_DIR/scripts/install.sh" &&
+            ! -L "$INSTALL_DIR/scripts/install.sh" ]] || {
+            echo "ОШИБКА: проект не установлен в $INSTALL_DIR" >&2
+            exit 1
+        }
+        exec bash "$INSTALL_DIR/scripts/install.sh" "$COMMAND" "${@:2}"
+        ;;
+esac
+
 run_bootstrap_cmd() {
     local description="$1"
     shift
@@ -74,8 +107,12 @@ run_bootstrap_cmd() {
 }
 
 prepare_repo() {
-    [[ ! -L "$BOOTSTRAP_LOG" ]] || { echo "ОШИБКА: bootstrap-лог не должен быть symlink"; exit 1; }
+    validate_bootstrap_log
+    if [[ "$BOOTSTRAP_LOG" == /var/log/vps-bootstrap/* ]]; then
+        install -d -m 700 /var/log/vps-bootstrap
+    fi
     : > "$BOOTSTRAP_LOG"
+    chmod 600 "$BOOTSTRAP_LOG"
     validate_install_dir
     [[ ! -L "$INSTALL_DIR" ]] || { echo "ОШИБКА: INSTALL_DIR не должен быть symlink"; exit 1; }
     if [[ -n "$REPO_COMMIT" && ! "$REPO_COMMIT" =~ ^[a-fA-F0-9]{40}$ ]]; then
@@ -126,9 +163,14 @@ set_env_value() {
     quoted="${value//\\/\\\\}"
     quoted="${quoted//\"/\\\"}"
     quoted="\"${quoted}\""
-    staged="$(mktemp ./.env.XXXXXX)"
+    staged="$(mktemp ./.env.XXXXXX)" || return 1
     while IFS= read -r line || [[ -n "$line" ]]; do
-        if [[ "$line" == "$key="* ]]; then
+        if [[ "$line" =~ ^[[:space:]]*${key}[[:space:]]*= ]]; then
+            if [[ "$replaced" == true ]]; then
+                rm -f -- "$staged"
+                echo "ОШИБКА: настройка $key встречается в .env более одного раза" >&2
+                return 1
+            fi
             printf '%s=%s\n' "$key" "$quoted" >> "$staged"
             replaced=true
         else
@@ -138,12 +180,12 @@ set_env_value() {
     if [[ "$replaced" == false ]]; then
         printf '%s=%s\n' "$key" "$quoted" >> "$staged"
     fi
-    chmod 600 "$staged"
-    mv -f "$staged" .env
+    chmod 600 "$staged" || { rm -f -- "$staged"; return 1; }
+    mv -f "$staged" .env || { rm -f -- "$staged"; return 1; }
 }
 
 configure_minimal_env() {
-    load_env_file .env || exit 1
+    load_env_file .env || return 1
 
     echo
     echo "Минимальная настройка"
@@ -152,36 +194,36 @@ configure_minimal_env() {
     local value
 
     while true; do
-        read -r -p "Домен [${DOMAIN:-example.com}]: " value
+        read -r -p "Домен [${DOMAIN:-example.com}]: " value || return 1
         if [[ -n "$value" ]]; then
             DOMAIN="$value"
         fi
 
         if [[ "${DOMAIN:-example.com}" != "example.com" ]] && valid_domain "$DOMAIN"; then
-            set_env_value DOMAIN "$DOMAIN"
+            set_env_value DOMAIN "$DOMAIN" || return 1
             break
         fi
 
         echo "Укажите реальный домен, например example.org"
     done
 
-    read -r -p "Email для Let's Encrypt [${LETSENCRYPT_EMAIL:-admin@example.com}]: " value
+    read -r -p "Email для Let's Encrypt [${LETSENCRYPT_EMAIL:-admin@example.com}]: " value || return 1
     if [[ -n "$value" ]]; then
-        set_env_value LETSENCRYPT_EMAIL "$value"
+        set_env_value LETSENCRYPT_EMAIL "$value" || return 1
     fi
 
-    read -r -p "Xray TCP порт [${XRAY_TCP_PORTS:-8443}]: " value
+    read -r -p "Xray TCP порт [${XRAY_TCP_PORTS:-8443}]: " value || return 1
     if [[ -n "$value" ]]; then
-        set_env_value XRAY_TCP_PORTS "$value"
+        set_env_value XRAY_TCP_PORTS "$value" || return 1
     fi
 
-    read -r -p "Устанавливать 3x-ui? [Y/n] " value
+    read -r -p "Устанавливать 3x-ui? [Y/n] " value || return 1
     case "$value" in
         n|N|no|NO|No)
-            set_env_value INSTALL_3X_UI "false"
+            set_env_value INSTALL_3X_UI "false" || return 1
             ;;
         *)
-            set_env_value INSTALL_3X_UI "true"
+            set_env_value INSTALL_3X_UI "true" || return 1
             ;;
     esac
 }
@@ -189,57 +231,131 @@ configure_minimal_env() {
 maybe_edit_env() {
     local value
 
-    read -r -p "Открыть полный .env в редакторе? [y/N] " value
+    read -r -p "Открыть полный .env в редакторе? [y/N] " value || return 1
     if [[ "$value" =~ ^[Yy]$ ]]; then
-        "${EDITOR:-nano}" .env
+        "${EDITOR:-nano}" .env || return 1
     fi
 }
 
 install_flow() {
-    load_env_file .env || exit 1
+    load_env_file .env || return 1
 
     if [[ "${DOMAIN:-example.com}" == "example.com" ]]; then
         if [[ "$ASSUME_YES" == true ]]; then
             echo "ОШИБКА: сначала задайте DOMAIN и LETSENCRYPT_EMAIL в $INSTALL_DIR/.env"
-            exit 1
+            return 1
         fi
-        configure_minimal_env
+        configure_minimal_env || return 1
     elif [[ "$ASSUME_YES" != true ]]; then
         echo
         echo "Текущий домен в .env: ${DOMAIN}"
-        read -r -p "Использовать текущую конфигурацию? [Y/n] " reply
+        read -r -p "Использовать текущую конфигурацию? [Y/n] " reply || return 1
         if [[ "$reply" =~ ^[Nn]$ ]]; then
-            configure_minimal_env
+            configure_minimal_env || return 1
         fi
     fi
 
     if [[ "$ASSUME_YES" == true ]]; then
         bash scripts/install.sh all
-        return
+        return $?
     fi
-    maybe_edit_env
+    maybe_edit_env || return 1
 
     echo
-    read -r -p "Начать установку? [y/N] " reply
+    read -r -p "Начать установку? [y/N] " reply || return 1
     if [[ ! "$reply" =~ ^[Yy]$ ]]; then
         echo "Установка отменена."
         echo "Продолжить позже: sudo bash scripts/install.sh all"
-        exit 0
+        return 0
     fi
 
     bash scripts/install.sh all
 }
 
+menu_service_status() {
+    if systemctl is-active --quiet "$1" 2>/dev/null; then
+        printf 'работает'
+    else
+        printf 'не работает'
+    fi
+}
+
+menu_firewall_status() {
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
+        printf 'включён'
+    else
+        printf 'не включён'
+    fi
+}
+
+menu_header() {
+    if ! load_env_file .env; then
+        echo "ПРЕДУПРЕЖДЕНИЕ: .env содержит ошибку; исправьте файл через пункт настройки" >&2
+    fi
+    local domain="${DOMAIN:-не задан}" cert="${NGINX_CERT_PATH:-/etc/letsencrypt/live/${DOMAIN:-example.com}/fullchain.pem}"
+    local tls_status="нет сертификата"
+    if [[ -f "$cert" ]] && command -v openssl >/dev/null 2>&1 &&
+        openssl x509 -in "$cert" -noout -checkend 0 >/dev/null 2>&1; then
+        tls_status="действует"
+    fi
+    printf '\n╭─ 3x-ui setup ──────────────────────────────────╮\n'
+    printf '│ Домен: %-40.40s │\n' "$domain"
+    printf '│ Панель: %-12s HTTPS: %-16s │\n' "$(menu_service_status x-ui)" "$tls_status"
+    printf '│ Nginx: %-13s UFW: %-18s │\n' "$(menu_service_status nginx)" "$(menu_firewall_status)"
+    printf '│ Fail2Ban: %-36s │\n' "$(menu_service_status fail2ban)"
+    printf '╰─────────────────────────────────────────────────╯\n'
+}
+
+menu_settings() {
+    printf '\n1) Быстрая настройка\n2) Открыть полный .env\n0) Назад\n'
+    local answer
+    read -r -p "Выберите действие: " answer || return 1
+    case "$answer" in
+        1) configure_minimal_env ;;
+        2) "${EDITOR:-nano}" .env ;;
+        0) return 0 ;;
+        *) echo "Неизвестный пункт: $answer"; return 1 ;;
+    esac
+}
+
+menu_last_log() {
+    local newest="" candidate
+    local log_dir="${LOG_DIR:-/var/log/vps-bootstrap}"
+    if [[ -d "$log_dir" ]]; then
+        while IFS= read -r candidate; do
+            newest="$candidate"
+            break
+        done < <(find "$log_dir" -maxdepth 1 -type f -name '*.log' -printf '%T@ %p\n' 2>/dev/null | sort -nr)
+    fi
+    if [[ -n "$newest" ]]; then
+        printf 'Последний лог: %s\n' "${newest#* }"
+    else
+        echo "Логов установки пока нет"
+    fi
+}
+
+menu_backups() {
+    printf '\nРезервные копии проекта:\n'
+    if [[ -d /root/vps-bootstrap-backups ]]; then
+        find /root/vps-bootstrap-backups -mindepth 1 -maxdepth 1 -type d -print | sort -r | sed -n '1,10p'
+    else
+        echo "Копий пока нет"
+    fi
+    echo "Перед восстановлением проверьте состав копии и остановите соответствующий сервис."
+}
+
 show_menu() {
     while true; do
+        menu_header
         cat <<EOF
-
-VPS Bootstrap
-1) Установить / обновить сервер
-2) Открыть .env
-3) Удалить сервисы
-4) Показать статус
-5) Показать данные доступа
+1) Установить / применить настройки
+2) Настроить домен, порты и защиту
+3) Показать адреса и реквизиты
+4) Проверить конфигурацию
+5) Найти последний лог
+6) Обновить версию 3x-ui
+7) Резервные копии
+8) Удалить компоненты
 0) Выход
 EOF
 
@@ -248,19 +364,28 @@ EOF
 
         case "$choice" in
             1)
-                install_flow
+                if ! install_flow; then echo "Установка завершилась с ошибкой; вы вернулись в меню"; fi
                 ;;
             2)
-                "${EDITOR:-nano}" .env
+                if ! menu_settings; then echo "Настройка не завершена"; fi
                 ;;
             3)
-                bash scripts/install.sh remove
+                if ! bash scripts/install.sh access; then echo "Данные доступа пока недоступны"; fi
                 ;;
             4)
-                bash scripts/install.sh status
+                if ! bash scripts/install.sh preflight; then echo "Проверка нашла ошибку"; fi
                 ;;
             5)
-                bash scripts/install.sh access
+                menu_last_log
+                ;;
+            6)
+                if ! bash scripts/install.sh upgrade-3x-ui; then echo "Обновление 3x-ui не завершено"; fi
+                ;;
+            7)
+                menu_backups
+                ;;
+            8)
+                if ! bash scripts/install.sh remove; then echo "Удаление не завершено"; fi
                 ;;
             0)
                 exit 0

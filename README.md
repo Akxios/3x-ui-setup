@@ -67,11 +67,13 @@ sudo bash scripts/install.sh access
 
 ```bash
 sudo bash scripts/install.sh status
+sudo bash scripts/install.sh preflight
 sudo bash scripts/install.sh nginx
 sudo bash scripts/install.sh firewall
+sudo bash scripts/install.sh upgrade-3x-ui
 sudo bash scripts/install.sh remove
 ```
 
-Скрипт не меняет настройки SSH, не настраивает DNS и не создаёт Xray inbound или клиентов. Повторный запуск и удаление описаны в [эксплуатации](docs/operations.md). Для проблем с сертификатом смотрите [диагностику ACME](docs/operations.md#сертификат-lets-encrypt).
+`preflight` проверяет параметры, пути, SSH и занятые порты до изменения сервера. Обновление версии 3x-ui запускается только отдельной командой после настройки тега и его SHA-256 в `.env`; обычный `all` сохраняет установленную версию. При удалении UFW остаётся включённым по умолчанию. Скрипт не меняет настройки SSH, не настраивает DNS и не создаёт Xray inbound или клиентов. Повторный запуск и удаление описаны в [эксплуатации](docs/operations.md). Для проблем с сертификатом смотрите [диагностику ACME](docs/operations.md#сертификат-lets-encrypt).
 
 Лицензия: [MIT](LICENSE).

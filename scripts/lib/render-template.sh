@@ -43,7 +43,9 @@ render_template() {
     rendered="${rendered//\{\{NGINX_IPV6_HTTPS_LISTEN\}\}/${ipv6_https_listen}}"
 
     local proxy_locations=""
-    if [[ -f "${XUI_STATE_FILE:-/etc/3x-ui-setup/access.json}" ]]; then
+    if [[ -f "${XUI_STATE_FILE:-/etc/3x-ui-setup/access.json}" ||
+        ( "${XUI_PROXY_PENDING:-false}" == true &&
+          -f "${XUI_STATE_FILE:-/etc/3x-ui-setup/access.json}.pending" ) ]]; then
         proxy_locations="$(xui_setup proxy)" || return 1
     fi
     rendered="${rendered//\{\{XUI_PROXY_LOCATIONS\}\}/${proxy_locations}}"

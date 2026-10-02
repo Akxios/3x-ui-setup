@@ -57,6 +57,35 @@ class SafetyTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("2222", result.stdout.split())
 
+    def test_env_reload_removes_deleted_keys(self):
+        config = self.base / ".env"
+        config.write_text('DOMAIN="safe.example.org"\nEXTRA_TCP_PORTS="9999"\n')
+        result = self.bash(
+            'source "$SCRIPT_DIR/lib/env-file.sh"\n'
+            'load_env_file "$CONFIG_FILE"\n'
+            'printf "%s\\n" "${EXTRA_TCP_PORTS}"\n'
+            'printf "%s\\n" "DOMAIN=safe.example.org" > "$CONFIG_FILE"\n'
+            'load_env_file "$CONFIG_FILE"\n'
+            '[[ -z "${EXTRA_TCP_PORTS+x}" ]]',
+            {"CONFIG_FILE": str(config)},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_runtime_paths_reject_system_files(self):
+        for summary in ("/etc/passwd", "/var/log/vps-bootstrap/../auth.log"):
+            with self.subTest(summary=summary):
+                result = self.bash(
+                    'source "$SCRIPT_DIR/lib/common.sh"\n'
+                    'source "$SCRIPT_DIR/lib/checks.sh"\n'
+                    "validate_runtime_paths",
+                    {
+                        "LOG_DIR": "/var/log/vps-bootstrap",
+                        "LOG_FILE": "/var/log/vps-bootstrap/all.log",
+                        "SUMMARY_FILE": summary,
+                    },
+                )
+                self.assertNotEqual(result.returncode, 0)
+
     def test_ssh_socket_port_takes_priority_over_stale_sshd_config(self):
         self.command("systemctl", 'echo "Listen=[::]:2222 (Stream)"')
         self.command("ss", "exit 0")
@@ -432,6 +461,73 @@ source "$SCRIPT_DIR/modules/40-fail2ban.sh"''',
         self.assertFalse(marker.exists())
         self.assertEqual(((self.base / ".env").stat().st_mode & 0o777), 0o600)
 
+    def test_bootstrap_updates_key_with_spaces_around_equals(self):
+        source = (ROOT / "bootstrap.sh").read_text()
+        function = source.split("set_env_value() {", 1)[1].split(
+            "\nconfigure_minimal_env() {", 1
+        )[0]
+        config = self.base / ".env"
+        config.write_text('DOMAIN = "old.example.org"\n')
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                "set -Eeuo pipefail\nset_env_value() {" + function + "\n"
+                'set_env_value DOMAIN "new.example.org"\n'
+                'source "$SCRIPT_DIR/lib/env-file.sh"\n'
+                "load_env_file .env\n"
+                '[[ "$DOMAIN" == new.example.org ]]',
+            ],
+            cwd=self.base,
+            env=self.env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(config.read_text().count("DOMAIN="), 1)
+
+    def test_bootstrap_log_rejects_system_file(self):
+        source = (ROOT / "bootstrap.sh").read_text()
+        function = source.split("validate_bootstrap_log() {", 1)[1].split(
+            "\nvalid_domain() {", 1
+        )[0]
+        result = self.bash(
+            "validate_bootstrap_log() {" + function + "\nvalidate_bootstrap_log",
+            {"BOOTSTRAP_LOG": "/etc/passwd"},
+        )
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_nginx_removal_restores_site_when_validation_fails(self):
+        source = (ROOT / "scripts/modules/80-remove.sh").read_text()
+        function = source.split("remove_nginx() {", 1)[1].split(
+            "\nremove_fail2ban() {", 1
+        )[0]
+        function = function.replace(
+            'local site_file="/etc/nginx/sites-available/${DOMAIN}"',
+            'local site_file="${NGINX_SITE_DIR}/${DOMAIN}"',
+        ).replace(
+            'local enabled_file="/etc/nginx/sites-enabled/${DOMAIN}"',
+            'local enabled_file="${NGINX_ENABLED_DIR}/${DOMAIN}"',
+        )
+        site = Path(self.env["NGINX_SITE_DIR"]) / self.env["DOMAIN"]
+        enabled = Path(self.env["NGINX_ENABLED_DIR"]) / self.env["DOMAIN"]
+        site.write_text("# Managed by 3x-ui-setup\nserver {}\n")
+        enabled.symlink_to(site)
+        self.command("nginx", "exit 1")
+        result = self.bash(
+            'source "$SCRIPT_DIR/lib/common.sh"\n'
+            "ensure_nginx_domain() { :; }\n"
+            "nginx_site_guard() { :; }\n"
+            "confirm_remove() { :; }\n"
+            "backup_file() { :; }\n"
+            'command_exists() { command -v "$1" >/dev/null 2>&1; }\n'
+            "remove_nginx() {" + function + "\nremove_nginx",
+            {"REMOVE_WEB_ROOT": "false"},
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(site.read_text(), "# Managed by 3x-ui-setup\nserver {}\n")
+        self.assertEqual(enabled.resolve(), site)
+
     def test_env_rejects_commands_without_running_them(self):
         marker = self.base / "injected"
         env_file = self.base / ".env"
@@ -498,6 +594,7 @@ source "$SCRIPT_DIR/modules/40-fail2ban.sh"''',
         checkout = self.base / "checkout"
         result = self.bash(
             "validate_install_dir() { :; }\n"
+            "validate_bootstrap_log() { :; }\n"
             'run_bootstrap_cmd() { shift; case "$1" in apt-get|env) return 0;; esac; "$@"; }\n'
             "prepare_repo() {" + function + "\nprepare_repo",
             {

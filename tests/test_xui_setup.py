@@ -6,7 +6,6 @@ import os
 import subprocess
 import tempfile
 import unittest
-import urllib.error
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -39,7 +38,7 @@ class SetupTests(unittest.TestCase):
             patch.object(setup, "check_ports"),
         ):
             setup.prepare()
-        return setup.load_state()
+        return setup.load_pending_state()
 
     def test_current_endpoint_uses_http_when_certificate_is_empty(self):
         with patch.object(
@@ -70,7 +69,7 @@ class SetupTests(unittest.TestCase):
         second = self.prepare()
         self.assertEqual(first, second)
         self.assertGreaterEqual(len(first["password"]), 24)
-        self.assertEqual(setup.state_path().stat().st_mode & 0o777, 0o600)
+        self.assertEqual(setup.pending_state_path().stat().st_mode & 0o777, 0o600)
         self.assertEqual(setup.state_path().parent.stat().st_mode & 0o777, 0o700)
         self.assertFalse(first["verified"])
         paths = setup.subscription_paths(first)
@@ -78,6 +77,17 @@ class SetupTests(unittest.TestCase):
         for path in paths:
             self.assertRegex(path, r"^/[a-f0-9]{24}/$")
         self.assertEqual(first["sub_path"], second["sub_path"])
+        self.assertFalse(setup.state_path().exists())
+
+    def test_reconfiguration_keeps_active_state_until_verification(self):
+        active = self.prepare()
+        active["verified"] = True
+        setup.save_state(active)
+        with patch.dict(os.environ, {"XUI_PANEL_PORT": "2054"}):
+            pending = self.prepare()
+        self.assertEqual(pending["panel_port"], 2054)
+        self.assertEqual(setup.load_state(), active)
+        self.assertFalse(pending["verified"])
 
     def test_existing_subscription_paths_are_preserved(self):
         state = self.prepare()
@@ -101,7 +111,7 @@ class SetupTests(unittest.TestCase):
         ):
             setup.prepare()
         self.assertEqual(
-            setup.subscription_paths(setup.load_state()),
+            setup.subscription_paths(setup.load_pending_state()),
             ("/existing-sub/", "/existing-json/", "/existing-clash/"),
         )
 
@@ -125,7 +135,7 @@ class SetupTests(unittest.TestCase):
             patch.object(setup, "check_ports"),
         ):
             setup.prepare()
-        self.assertEqual(setup.load_state()["sub_path"], "/manual-sub/")
+        self.assertEqual(setup.load_pending_state()["sub_path"], "/manual-sub/")
 
     def test_existing_install_without_credentials_is_untouched(self):
         with (
@@ -214,7 +224,7 @@ class SetupTests(unittest.TestCase):
             payload["subJsonURI"], f"https://{state['domain']}{state['sub_json_path']}"
         )
         run.assert_called_once_with(["systemctl", "restart", "x-ui"], check=True)
-        self.assertFalse(setup.load_state()["verified"])
+        self.assertFalse(setup.load_pending_state()["verified"])
 
     def test_failed_setting_update_does_not_restart(self):
         self.prepare()
@@ -238,6 +248,22 @@ class SetupTests(unittest.TestCase):
                 setup.configure()
             run.assert_not_called()
 
+    def test_unchanged_settings_do_not_restart_panel(self):
+        state = self.prepare()
+        api = Mock()
+        api.settings.return_value = setup.desired_settings(state)
+        with (
+            patch.object(setup, "Panel", return_value=api),
+            patch.object(setup, "current_endpoint", return_value="http://local/"),
+            patch.object(setup, "wait_panel", return_value="http://local/"),
+            patch.object(setup, "check_ports"),
+            patch.object(setup.subprocess, "run") as run,
+        ):
+            setup.configure()
+        api.request.assert_not_called()
+        run.assert_not_called()
+        self.assertFalse(setup.load_pending_state()["service_changed"])
+
     def test_unsupported_clash_version_stops_before_changes(self):
         self.prepare()
         api = Mock()
@@ -259,6 +285,7 @@ class SetupTests(unittest.TestCase):
 
     def test_proxy_preserves_base_path_and_overrides_blocking_regex(self):
         state = self.prepare()
+        setup.save_state(state)
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             setup.proxy()
@@ -287,14 +314,44 @@ class SetupTests(unittest.TestCase):
             with self.assertRaises(setup.SetupError):
                 setup.verify()
         self.assertEqual(card.read_text(), "previous working card")
-        self.assertFalse(setup.load_state()["verified"])
+        self.assertFalse(setup.load_pending_state()["verified"])
+
+    def test_state_write_failure_restores_previous_access_card(self):
+        self.prepare()
+        card = Path(os.environ["XUI_ACCESS_FILE"])
+        card.write_text("previous working card")
+        responses = [
+            subprocess.CompletedProcess(
+                [],
+                0,
+                stdout=(
+                    "HTTP/2 200\r\nX-3x-UI-Route: panel\r\n"
+                    if index == 0
+                    else "HTTP/2 404\r\nX-3x-UI-Route: subscription\r\n"
+                ),
+            )
+            for index in range(4)
+        ]
+        with (
+            patch.object(setup.subprocess, "run", side_effect=responses),
+            patch.object(setup.socket, "create_connection"),
+            patch.object(setup, "save_state", side_effect=OSError("disk full")),
+        ):
+            with self.assertRaises(OSError):
+                setup.verify()
+        self.assertEqual(card.read_text(), "previous working card")
+        self.assertFalse(setup.state_path().exists())
 
     def test_successful_verification_publishes_private_card(self):
         state = self.prepare()
+        state["service_changed"] = True
+        setup.save_pending_state(state)
         results = [
             subprocess.CompletedProcess([], 0, stdout=code)
             for code in (
                 "HTTP/2 200\r\nX-3x-UI-Route: panel\r\n",
+                "HTTP/2 404\r\nX-3x-UI-Route: subscription\r\n",
+                "HTTP/2 404\r\nX-3x-UI-Route: subscription\r\n",
                 "HTTP/2 404\r\nX-3x-UI-Route: subscription\r\n",
             )
         ]
@@ -323,6 +380,7 @@ class SetupTests(unittest.TestCase):
         self.assertIn("после создания inbound и клиента", card_text)
         self.assertEqual(card.stat().st_mode & 0o777, 0o600)
         self.assertTrue(setup.load_state()["verified"])
+        self.assertFalse(setup.pending_state_path().exists())
 
     def test_access_card_does_not_claim_success_before_verification(self):
         state = self.prepare()
@@ -343,11 +401,12 @@ class SetupTests(unittest.TestCase):
         with patch.object(setup.subprocess, "run", side_effect=results):
             with self.assertRaises(setup.SetupError):
                 setup.verify()
-        self.assertFalse(setup.load_state()["verified"])
+        self.assertFalse(setup.load_pending_state()["verified"])
         self.assertFalse(Path(os.environ["XUI_ACCESS_FILE"]).exists())
 
     def test_real_nginx_template_renders_proxy_routes(self):
         state = self.prepare()
+        setup.save_state(state)
         root = Path(__file__).parents[1]
         destination = Path(self.tmp.name) / "site.conf"
         env = dict(

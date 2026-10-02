@@ -96,6 +96,7 @@ XUI_SUB_PORT="2096"
 REMOVE_WEB_ROOT="false"
 REMOVE_CERTBOT_CERT="false"
 REMOVE_XUI_DATA="false"
+REMOVE_UFW_DISABLE="false"
 PURGE_PACKAGES="false"
 REMOVE_CONFIRM="false"
 
@@ -273,11 +274,11 @@ IP-адреса и подсети, которые Fail2Ban не должен б�
 
 ### `INSTALL_3X_UI`
 
-Если `true`, запускается официальный installer 3x-ui только при отсутствии установленного бинарного файла. Существующая панель сохраняется и настраивается через API.
+Если `true`, официальный installer 3x-ui запускается командой `all` только при отсутствии установленного бинарного файла. Существующая панель сохраняется и настраивается через API. Для смены версии служит отдельная команда `upgrade-3x-ui`.
 
 ### `THREE_X_UI_VERSION`
 
-По умолчанию `v3.8.5`. При смене версии нужны совместимый API, URL и новый `THREE_X_UI_INSTALL_SHA256`. Если API старой версии не поддерживает JSON/Clash-настройки, автонастройка остановится до изменения панели.
+По умолчанию `v3.8.5`. Поддерживается закреплённый тег формата `vX.Y.Z`. При смене версии нужны совместимый API, URL и новый `THREE_X_UI_INSTALL_SHA256`. Если API старой версии не поддерживает JSON/Clash-настройки, автонастройка остановится до изменения панели. Смена этого значения сама по себе не обновляет существующую панель; запустите `upgrade-3x-ui`.
 
 ### `THREE_X_UI_INSTALL_URL`
 
@@ -330,6 +331,10 @@ https://raw.githubusercontent.com/MHSanaei/3x-ui/v3.8.5/install.sh
 
 Если `true`, при удалении 3x-ui будет удалён каталог `/etc/x-ui`. По умолчанию данные 3x-ui сохраняются.
 
+### `REMOVE_UFW_DISABLE`
+
+По умолчанию `false`: даже `remove all` оставляет firewall включённым. Значение `true` разрешает отключение только если установщик ранее включил UFW и оставил маркер владения.
+
 ### `PURGE_PACKAGES`
 
 Если `true`, после удаления компонентов будут удалены связанные apt-пакеты через `apt-get purge` и `apt-get autoremove`.
@@ -362,6 +367,8 @@ https://raw.githubusercontent.com/MHSanaei/3x-ui/v3.8.5/install.sh
 /var/log/vps-bootstrap
 ```
 
+Допускается только этот каталог или его подкаталог. Символьные ссылки в пути запрещены.
+
 ### `SUMMARY_FILE`
 
 Файл итогового summary. Для основной установки по умолчанию:
@@ -371,3 +378,4 @@ https://raw.githubusercontent.com/MHSanaei/3x-ui/v3.8.5/install.sh
 ```
 
 Для команд `status` и `remove` скрипт создаёт timestamped summary в `LOG_DIR`, если явно не задан другой `SUMMARY_FILE`.
+Пользовательский `SUMMARY_FILE` может быть `/root/vps-bootstrap-summary.txt` или `.txt`-файлом внутри `LOG_DIR`; произвольные системные файлы запрещены.
