@@ -150,7 +150,36 @@ install_packages_if_missing() {
     if [[ "${#missing[@]}" -gt 0 ]]; then
         apt_update_once
         run_logged "Установка пакетов: ${missing[*]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
+        record_project_packages "${missing[@]}"
     else
         ok "Пакеты уже установлены: $*"
     fi
+}
+
+record_project_packages() {
+    local marker_dir="/etc/3x-ui-setup"
+    local marker_file="$marker_dir/apt-installed-by-project"
+    local staged package
+    [[ ! -L "$marker_dir" && ( ! -e "$marker_dir" || -d "$marker_dir" ) ]] ||
+        fail "Каталог учёта пакетов не должен быть символьной ссылкой"
+    if [[ -d "$marker_dir" ]]; then
+        [[ "$(stat -c %u "$marker_dir")" == 0 ]] || fail "Каталог учёта пакетов должен принадлежать root"
+    fi
+    [[ ! -L "$marker_file" && ( ! -e "$marker_file" || -f "$marker_file" ) ]] ||
+        fail "Файл учёта пакетов не должен быть символьной ссылкой"
+    if [[ -f "$marker_file" ]]; then
+        [[ "$(stat -c %u "$marker_file")" == 0 ]] || fail "Файл учёта пакетов должен принадлежать root"
+    fi
+    for package in "$@"; do
+        [[ "$package" =~ ^[a-z0-9][a-z0-9.+-]*$ ]] || fail "Некорректное имя пакета: $package"
+    done
+    install -d -m 700 "$marker_dir"
+    staged="$(mktemp "$marker_dir/.apt-installed.XXXXXX")"
+    if [[ -f "$marker_file" ]]; then cat "$marker_file" > "$staged"; fi
+    for package in "$@"; do
+        printf '%s\n' "$package" >> "$staged"
+    done
+    sort -u "$staged" -o "$staged"
+    chmod 600 "$staged"
+    mv -f "$staged" "$marker_file"
 }

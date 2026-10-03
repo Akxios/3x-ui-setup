@@ -89,6 +89,46 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(setup.load_state(), active)
         self.assertFalse(pending["verified"])
 
+    def test_unfinished_change_is_recovered_before_prepare(self):
+        active = self.prepare()
+        active["verified"] = True
+        setup.save_state(active)
+        pending = dict(active, service_changed=True)
+        setup.save_pending_state(pending)
+        snapshot = setup.state_path().parent / "settings-before.json"
+        snapshot.write_text('{"webPort": 2053}')
+
+        def recover():
+            recovered = setup.load_pending_state()
+            recovered["service_changed"] = False
+            setup.save_pending_state(recovered)
+
+        with (
+            patch.object(setup, "installed", return_value=False),
+            patch.object(setup, "check_ports"),
+            patch.object(setup, "rollback", side_effect=recover) as rollback,
+        ):
+            setup.prepare()
+        rollback.assert_called_once()
+        self.assertEqual(snapshot.read_text(), '{"webPort": 2053}')
+        self.assertFalse(setup.load_pending_state().get("service_changed", False))
+
+    def test_failed_recovery_preserves_pending_state_and_snapshot(self):
+        pending = self.prepare()
+        pending["service_changed"] = True
+        setup.save_pending_state(pending)
+        snapshot = setup.state_path().parent / "settings-before.json"
+        snapshot.write_text('{"webPort": 2053}')
+        with patch.object(
+            setup, "rollback", side_effect=setup.SetupError("unavailable")
+        ):
+            with self.assertRaisesRegex(setup.SetupError, "unavailable"):
+                setup.prepare()
+            with self.assertRaisesRegex(setup.SetupError, "unavailable"):
+                setup.configure()
+        self.assertEqual(setup.load_pending_state(), pending)
+        self.assertEqual(snapshot.read_text(), '{"webPort": 2053}')
+
     def test_existing_subscription_paths_are_preserved(self):
         state = self.prepare()
         for key in ("sub_path", "sub_json_path", "sub_clash_path"):
@@ -145,6 +185,45 @@ class SetupTests(unittest.TestCase):
             with self.assertRaises(setup.SetupError):
                 setup.prepare()
         self.assertFalse(setup.state_path().exists())
+
+    def test_inbound_ports_only_include_enabled_public_listeners(self):
+        state = self.prepare()
+        setup.save_state(state)
+        api = Mock()
+        api.request.return_value = [
+            {"enable": True, "listen": "", "port": 17000},
+            {"enable": True, "listen": "0.0.0.0", "port": 18000},
+            {"enable": True, "listen": "127.0.0.1", "port": 19000},
+            {"enable": False, "listen": "", "port": 20000},
+            {"enable": True, "listen": "::1", "port": 21000},
+        ]
+        with (
+            patch.object(setup, "installed", return_value=True),
+            patch.object(setup, "current_endpoint", return_value="http://local/"),
+            patch.object(setup, "Panel", return_value=api),
+        ):
+            self.assertEqual(setup.inbound_ports(), [17000, 18000])
+        api.request.assert_called_once_with("panel/api/inbounds/list")
+
+    def test_inbound_ports_reject_bad_api_data_and_management_ports(self):
+        state = self.prepare()
+        setup.save_state(state)
+        api = Mock()
+        with (
+            patch.object(setup, "installed", return_value=True),
+            patch.object(setup, "current_endpoint", return_value="http://local/"),
+            patch.object(setup, "Panel", return_value=api),
+        ):
+            for response in (
+                {"not": "a list"},
+                [{"enable": "true", "listen": "", "port": 17000}],
+                [{"enable": True, "listen": "invalid", "port": 17000}],
+                [{"enable": True, "listen": "", "port": state["panel_port"]}],
+            ):
+                with self.subTest(response=response):
+                    api.request.return_value = response
+                    with self.assertRaises(setup.SetupError):
+                        setup.inbound_ports()
 
     def test_invalid_or_conflicting_ports_and_paths(self):
         for values in (

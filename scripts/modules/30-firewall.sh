@@ -17,6 +17,57 @@ validate_port() {
     [[ "$port" =~ ^[0-9]+$ ]] && (( 10#$port >= 1 && 10#$port <= 65535 )) || fail "Некорректный порт: $port"
 }
 
+sync_xray_ufw_rules() {
+    local line rule port protocol comment status
+    local -A desired=() managed=() existing=()
+    for port in $xray_tcp_ports; do desired["$port/tcp"]=1; done
+    for port in $xray_udp_ports; do desired["$port/udp"]=1; done
+    status="$(ufw status)" || fail "Не удалось прочитать правила UFW"
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^([0-9]+)/(tcp|udp)[[:space:]] ]]; then
+            port="${BASH_REMATCH[1]}"
+            protocol="${BASH_REMATCH[2]}"
+            rule="$port/$protocol"
+            if [[ "$line" == *"ALLOW IN"* && "$line" == *"3x-ui-setup-xray-${port}-${protocol}" ]]; then
+                managed["$rule"]=1
+            elif [[ "$line" == *"ALLOW IN"* ]]; then
+                existing["$rule"]=1
+            fi
+        fi
+    done <<< "$status"
+
+    for rule in "${!desired[@]}"; do
+        [[ -z "${managed[$rule]:-}" ]] || continue
+        if [[ -n "${existing[$rule]:-}" ]]; then
+            warn "Правило UFW для $rule уже существует без метки проекта; оно сохранено"
+            continue
+        fi
+        port="${rule%/*}"
+        protocol="${rule#*/}"
+        comment="3x-ui-setup-xray-${port}-${protocol}"
+        run_logged "UFW allow $rule для Xray" ufw allow "$rule" comment "$comment"
+        status="$(ufw status)" || fail "Не удалось проверить правило UFW для $rule"
+        [[ "$status" == *"$comment"* ]] || fail "UFW не сохранил правило $rule с меткой проекта"
+    done
+
+    for rule in "${!managed[@]}"; do
+        [[ -z "${desired[$rule]:-}" ]] || continue
+        port="${rule%/*}"
+        protocol="${rule#*/}"
+        if [[ "$protocol" == tcp && " $tcp_ports $ssh_ports " == *" $port "* ]] ||
+            [[ "$protocol" == udp && " $udp_ports " == *" $port "* ]]; then
+            warn "Правило Xray $rule оставлено: порт всё ещё нужен другому компоненту"
+            continue
+        fi
+        run_logged "Удаление устаревшего правила Xray $rule" ufw --force delete allow "$rule"
+        comment="3x-ui-setup-xray-${port}-${protocol}"
+        status="$(ufw status)" || fail "Не удалось проверить удаление правила UFW для $rule"
+        if [[ "$status" == *"$comment"* ]]; then
+            fail "Устаревшее правило Xray $rule осталось в UFW; проверьте его вручную"
+        fi
+    done
+}
+
 ssh_ports="$(detect_ssh_ports)"
 [[ -n "${ssh_ports// }" ]] || fail "SSH-порты не определены. Задайте CURRENT_SSH_PORTS"
 for port in $ssh_ports; do validate_port "$port"; done
@@ -24,18 +75,37 @@ warn "SSH-порты, которые будут оставлены открыт�
 
 tcp_ports="${WEB_TCP_PORTS:-80 443} ${EXTRA_TCP_PORTS:-}"
 udp_ports="${WEB_UDP_PORTS:-} ${EXTRA_UDP_PORTS:-}"
+xray_tcp_ports=""
+xray_udp_ports=""
 if bool_enabled "${INSTALL_3X_UI:-false}" && bool_enabled "${XUI_AUTO_CONFIGURE:-true}"; then
     ! bool_enabled "${UFW_RESET_RULES:-false}" || fail "Автонастройка запрещает UFW_RESET_RULES=true"
     [[ "${UFW_DEFAULT_INCOMING:-deny}" == deny && "${UFW_DEFAULT_OUTGOING:-allow}" == allow ]] || fail "Автонастройка требует UFW incoming=deny и outgoing=allow"
     tcp_ports="$tcp_ports 80 443"
 fi
 if bool_enabled "${ENABLE_3X_UI_PORTS:-true}"; then
-    tcp_ports="$tcp_ports ${XRAY_TCP_PORTS:-} ${XUI_PANEL_TCP_PORTS:-}"
-    udp_ports="$udp_ports ${XRAY_UDP_PORTS:-}"
+    tcp_ports="$tcp_ports ${XUI_PANEL_TCP_PORTS:-}"
+    xray_tcp_ports="${XRAY_TCP_PORTS:-}"
+    xray_udp_ports="${XRAY_UDP_PORTS:-}"
+    if bool_enabled "${INSTALL_3X_UI:-false}" && bool_enabled "${XUI_AUTO_CONFIGURE:-true}"; then
+        inbound_ports="$(xui_setup inbound-ports)" || fail "Не удалось прочитать inbound панели; правила UFW не менялись"
+        for port in $inbound_ports; do
+            validate_port "$port"
+            inbound_listening=false
+            if ss -H -ltnp 2>/dev/null | awk -v target=":$port" '$4 ~ target"$" && $4 !~ /^(127\.|\[::1\]|::1:)/ && /"xray[^"]*"/ {found=1} END {exit !found}'; then
+                xray_tcp_ports="$xray_tcp_ports $port"
+                inbound_listening=true
+            fi
+            if ss -H -lunp 2>/dev/null | awk -v target=":$port" '$4 ~ target"$" && $4 !~ /^(127\.|\[::1\]|::1:)/ && /"xray[^"]*"/ {found=1} END {exit !found}'; then
+                xray_udp_ports="$xray_udp_ports $port"
+                inbound_listening=true
+            fi
+            [[ "$inbound_listening" == true ]] || fail "Inbound $port включён, но Xray не слушает публичный адрес; правила UFW не менялись"
+        done
+    fi
 fi
 
 # Check all input before resetting or changing active firewall policies.
-for port in $tcp_ports $udp_ports; do validate_port "$port"; done
+for port in $tcp_ports $udp_ports $xray_tcp_ports $xray_udp_ports; do validate_port "$port"; done
 if bool_enabled "${INSTALL_3X_UI:-false}" && bool_enabled "${XUI_AUTO_CONFIGURE:-true}"; then
     xui_ports="$(xui_setup ports)" || fail "Не удалось прочитать локальные порты 3x-ui"
     read -r panel_port sub_port <<< "$xui_ports"
@@ -52,13 +122,13 @@ for port in 80 443; do
         fail "Порт $port/tcp занят не nginx: отклонено открытие UFW"
     fi
 done
-for port in ${XRAY_TCP_PORTS:-}; do
-    if command_exists ss && ss -H -ltnp 2>/dev/null | awk -v target=":$port" '$4 ~ target"$" && $0 !~ /"xray"/ {found=1} END {exit !found}'; then
+for port in $xray_tcp_ports; do
+    if command_exists ss && ss -H -ltnp 2>/dev/null | awk -v target=":$port" '$4 ~ target"$" && $0 !~ /"xray[^"]*"/ {found=1} END {exit !found}'; then
         fail "Порт $port/tcp занят другим сервисом: отклонено открытие UFW"
     fi
 done
-for port in ${XRAY_UDP_PORTS:-}; do
-    if command_exists ss && ss -H -lunp 2>/dev/null | awk -v target=":$port" '$4 ~ target"$" && $0 !~ /"xray"/ {found=1} END {exit !found}'; then
+for port in $xray_udp_ports; do
+    if command_exists ss && ss -H -lunp 2>/dev/null | awk -v target=":$port" '$4 ~ target"$" && $0 !~ /"xray[^"]*"/ {found=1} END {exit !found}'; then
         fail "Порт $port/udp занят другим сервисом: отклонено открытие UFW"
     fi
 done
@@ -96,6 +166,7 @@ if bool_enabled "${INSTALL_3X_UI:-false}" && bool_enabled "${XUI_AUTO_CONFIGURE:
 fi
 
 run_logged "Включение UFW" ufw --force enable
+sync_xray_ufw_rules
 run_logged "Перезагрузка UFW" ufw reload
 ufw_status="$(ufw status)"
 printf '%s\n' "$ufw_status" | grep -q '^Status: active' || fail "UFW не активен после настройки"
@@ -115,7 +186,7 @@ fi
 
 summary_section "Firewall"
 summary_add "SSH порты: ${ssh_ports}"
-summary_add "TCP порты: $(echo "$tcp_ports" | xargs)"
-summary_add "UDP порты: $(echo "$udp_ports" | xargs)"
+summary_add "TCP порты: $(echo "$tcp_ports $xray_tcp_ports" | xargs)"
+summary_add "UDP порты: $(echo "$udp_ports $xray_udp_ports" | xargs)"
 ok "UFW настроен"
 if bool_enabled "${VERBOSE:-false}"; then ufw status verbose; fi

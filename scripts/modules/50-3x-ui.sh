@@ -80,6 +80,7 @@ if bool_enabled "${XUI_AUTO_CONFIGURE:-true}"; then
     # Credentials are deliberately kept out of the general installation log.
     xui_setup install "$xui_installer" "$THREE_X_UI_VERSION" > "$xui_log" 2>&1 || installer_status=$?
 elif bool_enabled "${XUI_INSTALL_VISIBLE:-false}"; then
+    warn "Ручной режим: installer может показать реквизиты панели в терминале; transcript хранится отдельно от общего лога"
     bash "$xui_installer" "$THREE_X_UI_VERSION" 2>&1 | tee "$xui_log" || installer_status=$?
 else
     bash "$xui_installer" "$THREE_X_UI_VERSION" > "$xui_log" 2>&1 || installer_status=$?
@@ -93,10 +94,6 @@ if (( installer_status == 0 )) && [[ "${XUI_UPGRADE_MODE:-false}" == true ]]; th
     else
         installer_status=1
     fi
-fi
-
-if ! bool_enabled "${XUI_AUTO_CONFIGURE:-true}"; then
-    cat "$xui_log" >> "$LOG_FILE"
 fi
 
 if (( installer_status != 0 )); then

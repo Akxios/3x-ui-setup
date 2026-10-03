@@ -166,6 +166,90 @@ source "$SCRIPT_DIR/modules/30-firewall.sh"''',
             operations.index("--force enable"),
         )
 
+    def test_xray_rule_sync_removes_only_project_marked_stale_ports(self):
+        rules = self.base / "ufw-rules"
+        rules.write_text("8444/tcp ALLOW IN Anywhere # administrator\n")
+        ufw = self.bin / "ufw"
+        ufw.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, pathlib, sys\n"
+            "rules = pathlib.Path(os.environ['UFW_RULES'])\n"
+            "args = sys.argv[1:]\n"
+            "if args == ['status']:\n"
+            "    print('Status: active')\n"
+            "    print(rules.read_text(), end='')\n"
+            "elif args and args[0] == 'allow':\n"
+            "    comment = ' # ' + args[3] if len(args) > 3 else ''\n"
+            "    rules.write_text(rules.read_text() + args[1] + ' ALLOW IN Anywhere' + comment + '\\n')\n"
+            "elif args and args[0] == 'insert':\n"
+            "    rules.write_text(rules.read_text() + args[3] + ' DENY IN Anywhere # ' + args[5] + '\\n')\n"
+            "elif args[:3] == ['--force', 'delete', 'allow']:\n"
+            "    rules.write_text(''.join(line for line in rules.read_text().splitlines(True) if not line.startswith(args[3] + ' ')))\n"
+        )
+        ufw.chmod(0o755)
+        self.command("systemctl", "exit 0")
+        self.command("ip", "exit 0")
+        self.command(
+            "ss",
+            'if [ "$2" = -ltnp ]; then printf \'LISTEN 0 128 0.0.0.0:%s 0.0.0.0:* users:(("xray",pid=1,fd=2))\\n\' "$INBOUND_PORT"; fi',
+        )
+        script = '''source "$SCRIPT_DIR/lib/common.sh"
+source "$SCRIPT_DIR/lib/checks.sh"
+detect_ssh_ports() { echo 22; }
+install_packages_if_missing() { :; }
+run_logged() { shift; "$@"; }
+xui_setup() { if [[ "$1" == ports ]]; then echo '2053 2096'; else echo "$INBOUND_PORT"; fi; }
+source "$SCRIPT_DIR/modules/30-firewall.sh"'''
+        options = {
+            "UFW_RULES": str(rules),
+            "ENABLE_UFW": "true",
+            "INSTALL_3X_UI": "true",
+            "XUI_AUTO_CONFIGURE": "true",
+            "ENABLE_3X_UI_PORTS": "true",
+            "XRAY_TCP_PORTS": "8443",
+            "WEB_TCP_PORTS": "80 443",
+        }
+        first = self.bash(script, {**options, "INBOUND_PORT": "17000"})
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertIn("3x-ui-setup-xray-8443-tcp", rules.read_text())
+        self.assertIn("3x-ui-setup-xray-17000-tcp", rules.read_text())
+        second = self.bash(script, {**options, "INBOUND_PORT": "18000"})
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn("3x-ui-setup-xray-18000-tcp", rules.read_text())
+        self.assertNotIn("17000/tcp", rules.read_text())
+        self.assertIn("8444/tcp ALLOW IN Anywhere # administrator", rules.read_text())
+        third = self.bash(
+            script,
+            {**options, "INBOUND_PORT": "18000", "XRAY_TCP_PORTS": "8444"},
+        )
+        self.assertEqual(third.returncode, 0, third.stderr)
+        self.assertNotIn("3x-ui-setup-xray-8443-tcp", rules.read_text())
+        self.assertIn("8444/tcp ALLOW IN Anywhere # administrator", rules.read_text())
+
+    def test_xray_api_failure_stops_before_firewall_changes(self):
+        self.command("ip", "exit 0")
+        self.command("ss", "exit 0")
+        self.command("ufw", 'echo "$*" >> "$OPERATIONS"')
+        result = self.bash(
+            '''source "$SCRIPT_DIR/lib/common.sh"
+source "$SCRIPT_DIR/lib/checks.sh"
+detect_ssh_ports() { echo 22; }
+install_packages_if_missing() { :; }
+xui_setup() { return 1; }
+source "$SCRIPT_DIR/modules/30-firewall.sh"''',
+            {
+                "ENABLE_UFW": "true",
+                "INSTALL_3X_UI": "true",
+                "XUI_AUTO_CONFIGURE": "true",
+                "ENABLE_3X_UI_PORTS": "true",
+                "XRAY_TCP_PORTS": "8443",
+                "WEB_TCP_PORTS": "80 443",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("правила UFW не менялись", result.stderr)
+        self.assertFalse(Path(self.env["OPERATIONS"]).exists())
+
     def test_nginx_failure_restores_previous_site(self):
         self.command(
             "nginx",
@@ -254,6 +338,73 @@ source "$SCRIPT_DIR/modules/20-nginx.sh"''',
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(site.read_text(), "# Managed by 3x-ui-setup\nPREVIOUS HTTPS\n")
         self.assertEqual((webroot / "index.html").read_text(), "keep website")
+
+    def test_certbot_failure_does_not_enable_previously_disabled_site(self):
+        self.command(
+            "nginx",
+            'if [ "$1" = -T ]; then printf "# configuration file %s/%s:\\n" "$NGINX_ENABLED_DIR" "$DOMAIN"; fi\nexit 0',
+        )
+        self.command("systemctl", "exit 0")
+        self.command("certbot", "exit 1")
+        self.command(
+            "curl",
+            'for url do :; done\ncat "$WEB_ROOT/.well-known/acme-challenge/${url##*/}"',
+        )
+        site = Path(self.env["NGINX_SITE_DIR"]) / self.env["DOMAIN"]
+        enabled = Path(self.env["NGINX_ENABLED_DIR"]) / self.env["DOMAIN"]
+        site.write_text("# Managed by 3x-ui-setup\nDISABLED\n")
+        result = self.bash(
+            '''source "$SCRIPT_DIR/lib/common.sh"
+source "$SCRIPT_DIR/lib/nginx-site.sh"
+install_packages_if_missing() { :; }
+render_template() { cp "$1" "$2"; }
+source "$SCRIPT_DIR/modules/20-nginx.sh"''',
+            {
+                "WEB_ROOT": str(self.base / "webroot"),
+                "NGINX_AUTO_HTTPS": "true",
+                "NGINX_CERT_PATH": str(self.base / "missing.pem"),
+                "NGINX_CERT_KEY_PATH": str(self.base / "missing-key.pem"),
+                "LETSENCRYPT_EMAIL": "admin@example.org",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(site.read_text(), "# Managed by 3x-ui-setup\nDISABLED\n")
+        self.assertFalse(enabled.exists())
+
+    def test_acme_failure_restores_existing_certificate_site(self):
+        self.command(
+            "nginx",
+            'if [ "$1" = -T ]; then printf "# configuration file %s/%s:\\n" "$NGINX_ENABLED_DIR" "$DOMAIN"; fi\nexit 0',
+        )
+        self.command("systemctl", "exit 0")
+        self.command("curl", "printf wrong")
+        self.command("certbot", 'echo called > "$OPERATIONS"')
+        site = Path(self.env["NGINX_SITE_DIR"]) / self.env["DOMAIN"]
+        enabled = Path(self.env["NGINX_ENABLED_DIR"]) / self.env["DOMAIN"]
+        site.write_text("# Managed by 3x-ui-setup\nPREVIOUS HTTPS\n")
+        enabled.symlink_to(site)
+        cert = self.base / "cert.pem"
+        key = self.base / "key.pem"
+        cert.write_text("existing cert")
+        key.write_text("existing key")
+        result = self.bash(
+            '''source "$SCRIPT_DIR/lib/common.sh"
+source "$SCRIPT_DIR/lib/nginx-site.sh"
+install_packages_if_missing() { :; }
+render_template() { cp "$1" "$2"; }
+source "$SCRIPT_DIR/modules/20-nginx.sh"''',
+            {
+                "WEB_ROOT": str(self.base / "webroot"),
+                "NGINX_AUTO_HTTPS": "true",
+                "NGINX_CERT_PATH": str(cert),
+                "NGINX_CERT_KEY_PATH": str(key),
+                "LETSENCRYPT_EMAIL": "admin@example.org",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(site.read_text(), "# Managed by 3x-ui-setup\nPREVIOUS HTTPS\n")
+        self.assertTrue(enabled.is_symlink())
+        self.assertFalse(Path(self.env["OPERATIONS"]).exists())
 
     def test_acme_probe_stops_before_certbot_and_restores_site(self):
         self.command(
@@ -566,6 +717,156 @@ source "$SCRIPT_DIR/modules/40-fail2ban.sh"''',
             "WEB_ROOT=/var\nguard_remove_webroot",
         )
         self.assertNotEqual(result.returncode, 0)
+
+    def test_manual_xui_installer_keeps_credentials_out_of_general_log(self):
+        installer = self.base / "installer.sh"
+        installer.write_text(
+            "#!/usr/bin/env bash\nprintf 'login: admin\\npassword: SUPER_SECRET\\n'\n"
+        )
+        installer.chmod(0o700)
+        transcript = self.base / "xui-transcript.log"
+        module = (ROOT / "scripts/modules/50-3x-ui.sh").read_text()
+        installer_block = module.split("installer_status=0\n", 1)[1].split(
+            "\nif (( installer_status != 0 ))", 1
+        )[0]
+        result = self.bash(
+            'source "$SCRIPT_DIR/lib/common.sh"\n'
+            'xui_installer="$TEST_INSTALLER"\n'
+            'xui_log="$TEST_TRANSCRIPT"\n'
+            "installer_status=0\n" + installer_block + "\n",
+            {
+                "TEST_INSTALLER": str(installer),
+                "TEST_TRANSCRIPT": str(transcript),
+                "XUI_AUTO_CONFIGURE": "false",
+                "XUI_INSTALL_VISIBLE": "false",
+                "THREE_X_UI_VERSION": "v3.8.5",
+            },
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("SUPER_SECRET", transcript.read_text())
+        self.assertNotIn("SUPER_SECRET", result.stdout + result.stderr)
+        log = Path(self.env["LOG_FILE"])
+        self.assertNotIn("SUPER_SECRET", log.read_text() if log.exists() else "")
+
+    def test_package_purge_only_uses_project_owned_packages(self):
+        marker = self.base / "apt-installed-by-project"
+        marker.write_text("nginx\n")
+        self.command("apt-get", 'echo "$*" >> "$OPERATIONS"')
+        source = (ROOT / "scripts/modules/80-remove.sh").read_text()
+        function = source.split("purge_packages_if_requested() {", 1)[1].split(
+            "\nguard_remove_webroot() {", 1
+        )[0]
+        function = (
+            function.replace(
+                'local marker_file="/etc/3x-ui-setup/apt-installed-by-project"',
+                'local marker_file="$TEST_MARKER"',
+            )
+            .replace(
+                '"$(stat -c %u "$marker_file")" == 0',
+                '"$(stat -c %u "$marker_file")" == "$EUID"',
+            )
+            .replace(
+                '"$(stat -c %u "$marker_dir")" == 0',
+                '"$(stat -c %u "$marker_dir")" == "$EUID"',
+            )
+        )
+        result = self.bash(
+            'source "$SCRIPT_DIR/lib/common.sh"\n'
+            "package_in_use_elsewhere() { return 1; }\n"
+            "purge_packages_if_requested() {" + function + "\n"
+            "purge_packages_if_requested nginx certbot",
+            {"PURGE_PACKAGES": "true", "TEST_MARKER": str(marker)},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            Path(self.env["OPERATIONS"]).read_text().splitlines(),
+            ["-s purge -y nginx", "purge -y nginx"],
+        )
+        self.assertEqual(marker.read_text(), "")
+        self.assertIn("certbot не помечен", result.stdout)
+
+    def test_installed_package_marker_is_private_and_idempotent(self):
+        marker_dir = self.base / "package-state"
+        source = (ROOT / "scripts/lib/common.sh").read_text()
+        function = source.split("record_project_packages() {", 1)[1]
+        function = (
+            function.replace(
+                'local marker_dir="/etc/3x-ui-setup"',
+                'local marker_dir="$TEST_MARKER_DIR"',
+            )
+            .replace(
+                '"$(stat -c %u "$marker_dir")" == 0',
+                '"$(stat -c %u "$marker_dir")" == "$EUID"',
+            )
+            .replace(
+                '"$(stat -c %u "$marker_file")" == 0',
+                '"$(stat -c %u "$marker_file")" == "$EUID"',
+            )
+        )
+        result = self.bash(
+            'source "$SCRIPT_DIR/lib/common.sh"\n'
+            "record_project_packages() {" + function + "\n"
+            "record_project_packages nginx certbot\n"
+            "record_project_packages nginx",
+            {"TEST_MARKER_DIR": str(marker_dir)},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        marker = marker_dir / "apt-installed-by-project"
+        self.assertEqual(marker.read_text().splitlines(), ["certbot", "nginx"])
+        self.assertEqual(marker.stat().st_mode & 0o777, 0o600)
+
+    def test_package_purge_refuses_transitive_package_removal(self):
+        marker = self.base / "apt-installed-by-project"
+        marker.write_text("nginx\n")
+        self.command(
+            "apt-get",
+            'echo "$*" >> "$OPERATIONS"\n'
+            'if [ "$1" = -s ]; then echo "Remv unrelated-service [1.0]"; fi',
+        )
+        source = (ROOT / "scripts/modules/80-remove.sh").read_text()
+        function = source.split("purge_packages_if_requested() {", 1)[1].split(
+            "\nguard_remove_webroot() {", 1
+        )[0]
+        function = function.replace(
+            'local marker_file="/etc/3x-ui-setup/apt-installed-by-project"',
+            'local marker_file="$TEST_MARKER"',
+        ).replace("== 0", '== "$EUID"')
+        result = self.bash(
+            'source "$SCRIPT_DIR/lib/common.sh"\n'
+            "package_in_use_elsewhere() { return 1; }\n"
+            "purge_packages_if_requested() {" + function + "\n"
+            "purge_packages_if_requested nginx",
+            {"PURGE_PACKAGES": "true", "TEST_MARKER": str(marker)},
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unrelated-service", result.stderr)
+        self.assertEqual(
+            Path(self.env["OPERATIONS"]).read_text().splitlines(), ["-s purge -y nginx"]
+        )
+        self.assertEqual(marker.read_text(), "nginx\n")
+
+    def test_package_purge_preserves_package_used_by_other_configuration(self):
+        marker = self.base / "apt-installed-by-project"
+        marker.write_text("nginx\n")
+        self.command("apt-get", 'echo "$*" >> "$OPERATIONS"')
+        source = (ROOT / "scripts/modules/80-remove.sh").read_text()
+        function = source.split("purge_packages_if_requested() {", 1)[1].split(
+            "\nguard_remove_webroot() {", 1
+        )[0]
+        function = function.replace(
+            'local marker_file="/etc/3x-ui-setup/apt-installed-by-project"',
+            'local marker_file="$TEST_MARKER"',
+        ).replace("== 0", '== "$EUID"')
+        result = self.bash(
+            'source "$SCRIPT_DIR/lib/common.sh"\n'
+            "package_in_use_elsewhere() { return 0; }\n"
+            "purge_packages_if_requested() {" + function + "\n"
+            "purge_packages_if_requested nginx",
+            {"PURGE_PACKAGES": "true", "TEST_MARKER": str(marker)},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(Path(self.env["OPERATIONS"]).exists())
+        self.assertEqual(marker.read_text(), "nginx\n")
 
     def test_bootstrap_checks_out_pinned_commit_after_branch_advances(self):
         remote = self.base / "remote"

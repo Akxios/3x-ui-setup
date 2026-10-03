@@ -2,6 +2,7 @@
 """3x-ui provisioning via its authenticated API; no direct database writes."""
 
 import http.cookiejar
+import ipaddress
 import json
 import os
 import re
@@ -71,6 +72,15 @@ def discard_pending(force=False):
                 "Откат 3x-ui не подтверждён; промежуточное состояние сохранено"
             )
     pending_state_path().unlink(missing_ok=True)
+
+
+def recover_unfinished_change():
+    if not pending_state_path().exists():
+        return
+    if load_pending_state().get("service_changed"):
+        # Never replace settings-before.json until the previous change has
+        # been rolled back. An interrupted run may have changed the panel.
+        rollback()
 
 
 def port(value):
@@ -235,6 +245,43 @@ def check_ports(state, settings=None):
                 ) from None
 
 
+def inbound_ports():
+    """Return enabled, externally bound inbound ports from the local panel."""
+    if not state_path().exists() or not installed():
+        return []
+    state = load_state()
+    api = Panel(
+        current_endpoint(), state["username"], state["password"], state["domain"]
+    )
+    inbounds = api.request("panel/api/inbounds/list")
+    if not isinstance(inbounds, list):
+        raise SetupError("API вернул некорректный список inbound")
+    result = set()
+    management_ports = {port(state["panel_port"]), port(state["sub_port"])}
+    for inbound in inbounds:
+        if not isinstance(inbound, dict) or not isinstance(inbound.get("enable"), bool):
+            raise SetupError("API вернул некорректный inbound")
+        if not inbound["enable"]:
+            continue
+        listen = inbound.get("listen", "")
+        if not isinstance(listen, str):
+            raise SetupError("API вернул некорректный адрес inbound")
+        if listen == "localhost":
+            continue
+        if listen:
+            try:
+                address = ipaddress.ip_address(listen)
+            except ValueError as error:
+                raise SetupError("Неподдерживаемый адрес inbound") from error
+            if address.is_loopback:
+                continue
+        number = port(inbound.get("port"))
+        if number in management_ports:
+            raise SetupError("Inbound использует локальный порт панели или подписки")
+        result.add(number)
+    return sorted(result)
+
+
 def import_result():
     result = {}
     path = Path("/etc/x-ui/install-result.env")
@@ -254,6 +301,7 @@ def prepare():
     domain = os.environ["DOMAIN"]
     if not re.fullmatch(r"[A-Za-z0-9.-]+", domain):
         raise SetupError("Некорректный домен")
+    recover_unfinished_change()
     active = load_state() if state_path().exists() else {}
     state = (
         active.copy()
@@ -383,6 +431,7 @@ def wait_panel(state, url=None):
 
 
 def configure():
+    recover_unfinished_change()
     state = load_pending_state()
     endpoint = wait_panel(state, current_endpoint())
     api = Panel(endpoint, state["username"], state["password"], state["domain"])
@@ -637,6 +686,9 @@ def main():
     elif command == "ports":
         state = load_pending_state() if pending_state_path().exists() else load_state()
         print(state["panel_port"], state["sub_port"])
+    elif command == "inbound-ports":
+        for number in inbound_ports():
+            print(number)
     elif command == "verify":
         verify()
     elif command == "access":

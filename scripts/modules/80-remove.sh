@@ -101,11 +101,86 @@ ensure_nginx_domain() {
     fi
 }
 
+package_in_use_elsewhere() {
+    local package="$1" entry
+    case "$package" in
+        nginx)
+            for entry in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
+                [[ -e "$entry" || -L "$entry" ]] && return 0
+            done
+            ;;
+        certbot)
+            for entry in /etc/letsencrypt/renewal/*.conf; do
+                [[ -f "$entry" ]] && return 0
+            done
+            ;;
+        fail2ban)
+            [[ -f /etc/fail2ban/jail.local ]] && return 0
+            for entry in /etc/fail2ban/jail.d/*; do
+                [[ -f "$entry" ]] && return 0
+            done
+            ;;
+        ufw)
+            # Firewall policy may still protect unrelated services after removal.
+            return 0
+            ;;
+    esac
+    return 1
+}
+
 purge_packages_if_requested() {
     if bool_enabled "${PURGE_PACKAGES:-false}"; then
-        log "Удаление apt-пакетов: $*"
-        DEBIAN_FRONTEND=noninteractive apt-get purge -y "$@"
-        DEBIAN_FRONTEND=noninteractive apt-get autoremove -y
+        local marker_file="/etc/3x-ui-setup/apt-installed-by-project"
+        local marker_dir="${marker_file%/*}"
+        local package staged recorded keep simulation action removed rest
+        local -a owned=()
+        [[ ! -L "$marker_dir" && ( ! -e "$marker_dir" || -d "$marker_dir" ) ]] ||
+            fail "Каталог учёта apt-пакетов не должен быть символьной ссылкой"
+        if [[ -d "$marker_dir" ]]; then
+            [[ "$(stat -c %u "$marker_dir")" == 0 ]] || fail "Каталог учёта apt-пакетов должен принадлежать root"
+        fi
+        [[ ! -L "$marker_file" ]] || fail "Файл учёта apt-пакетов не должен быть symlink"
+        if [[ ! -f "$marker_file" ]]; then
+            warn "Нет записи о пакетах, установленных проектом; apt-пакеты оставлены на сервере"
+            return 0
+        fi
+        [[ ! -L "$marker_file" && "$(stat -c %u "$marker_file")" == 0 ]] ||
+            fail "Файл учёта apt-пакетов должен принадлежать root и не быть symlink"
+        for package in "$@"; do
+            if grep -Fxq -- "$package" "$marker_file"; then
+                if package_in_use_elsewhere "$package"; then
+                    warn "Пакет $package используется или может использоваться другими настройками; оставлен"
+                else
+                    owned+=("$package")
+                fi
+            else
+                warn "Пакет $package не помечен как установленный проектом; оставлен"
+            fi
+        done
+        [[ "${#owned[@]}" -gt 0 ]] || return 0
+        simulation="$(LC_ALL=C DEBIAN_FRONTEND=noninteractive apt-get -s purge -y "${owned[@]}")" ||
+            fail "Не удалось проверить план удаления apt-пакетов; пакеты оставлены"
+        while read -r action removed rest; do
+            [[ "$action" == Remv || "$action" == Purg ]] || continue
+            keep=false
+            for package in "${owned[@]}"; do
+                if [[ "$removed" == "$package" ]]; then keep=true; break; fi
+            done
+            [[ "$keep" == true ]] || fail "apt планирует удалить посторонний пакет $removed; пакеты оставлены"
+        done <<< "$simulation"
+        log "Удаление только пакетов проекта: ${owned[*]}"
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y "${owned[@]}" ||
+            fail "Не удалось удалить apt-пакеты; запись о владении сохранена"
+        staged="$(mktemp "${marker_file}.XXXXXX")"
+        while IFS= read -r recorded; do
+            keep=true
+            for package in "${owned[@]}"; do
+                if [[ "$recorded" == "$package" ]]; then keep=false; break; fi
+            done
+            if [[ "$keep" == true ]]; then printf '%s\n' "$recorded" >> "$staged"; fi
+        done < "$marker_file"
+        chmod 600 "$staged"
+        mv -f "$staged" "$marker_file"
     fi
 }
 
@@ -216,6 +291,7 @@ remove_fail2ban() {
         fi
         rm -f "$jail_snapshot"
     fi
+    purge_packages_if_requested fail2ban
     ok "Fail2Ban jail проекта удалён"
 }
 
