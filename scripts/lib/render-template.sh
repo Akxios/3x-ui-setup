@@ -18,8 +18,10 @@ render_template() {
         www_domain="www.${DOMAIN}"
     fi
 
-    local ssh_ports
-    ssh_ports="$(detect_ssh_ports | xargs | tr ' ' ',')"
+    local ssh_ports=""
+    if [[ "$rendered" == *'{{SSH_PORTS}}'* ]]; then
+        ssh_ports="$(detect_ssh_ports | xargs | tr ' ' ',')" || return 1
+    fi
 
     rendered="${rendered//\{\{DOMAIN\}\}/${DOMAIN}}"
     rendered="${rendered//\{\{WWW_DOMAIN\}\}/${www_domain}}"
@@ -43,7 +45,8 @@ render_template() {
     rendered="${rendered//\{\{NGINX_IPV6_HTTPS_LISTEN\}\}/${ipv6_https_listen}}"
 
     local proxy_locations=""
-    if [[ -f "${XUI_STATE_FILE:-/etc/3x-ui-setup/access.json}" ||
+    if [[ "$rendered" == *'{{XUI_PROXY_LOCATIONS}}'* ]] &&
+        [[ -f "${XUI_STATE_FILE:-/etc/3x-ui-setup/access.json}" ||
         ( "${XUI_PROXY_PENDING:-false}" == true &&
           -f "${XUI_STATE_FILE:-/etc/3x-ui-setup/access.json}.pending" ) ]]; then
         proxy_locations="$(xui_setup proxy)" || return 1

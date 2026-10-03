@@ -29,6 +29,8 @@ load_env_file() {
             return 1
         }
         printf -v "$name" '%s' "$value"
+        # The parser has already restricted this to supported configuration keys.
+        # shellcheck disable=SC2163
         export "$name"
         _3XUI_LOADED_ENV_KEYS+=("$name")
     done < "$pairs"

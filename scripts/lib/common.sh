@@ -113,7 +113,8 @@ print_summary() {
 backup_file() {
     local file="$1"
     local backup_root="/root/vps-bootstrap-backups"
-    local backup_dir="${backup_root}/$(date +%Y%m%d-%H%M%S)"
+    local backup_dir
+    backup_dir="${backup_root}/$(date +%Y%m%d-%H%M%S)"
 
     if [[ -e "$file" ]]; then
         [[ ! -L "$backup_root" && ( ! -e "$backup_root" || -d "$backup_root" ) ]] ||

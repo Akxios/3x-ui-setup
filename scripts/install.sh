@@ -47,6 +47,8 @@ set_default() {
 
     if [[ -z "${!name:-}" ]]; then
         printf -v "$name" '%s' "$value"
+        # The name comes from our fixed set_default calls; export its value dynamically.
+        # shellcheck disable=SC2163
         export "$name"
     fi
 }
@@ -281,6 +283,7 @@ usage() {
   sudo bash scripts/install.sh 3x-ui
   sudo bash scripts/install.sh upgrade-3x-ui
   sudo bash scripts/install.sh preflight
+  sudo bash scripts/install.sh doctor
   sudo bash scripts/install.sh status
   sudo bash scripts/install.sh access
   sudo bash scripts/install.sh remove
@@ -323,6 +326,11 @@ main() {
     load_env
     apply_env_defaults
     validate_env "$command"
+    if [[ "$command" == doctor ]]; then
+        env -u XUI_USERNAME -u XUI_PASSWORD -u XUI_WEB_BASE_PATH \
+            python3 "${SCRIPT_DIR}/lib/doctor.py"
+        return $?
+    fi
     if [[ "$command" != status && "$command" != remove && "$command" != delete && "$command" != uninstall ]]; then
         preflight_install "$command"
     fi
@@ -377,6 +385,8 @@ main() {
             bool_enabled "$INSTALL_3X_UI" || fail "INSTALL_3X_UI=false: обновление отключено"
             [[ -x /usr/local/x-ui/x-ui ]] || fail "3x-ui ещё не установлен; используйте команду all"
             prepare_xui
+            # Read by sourced modules/50-3x-ui.sh.
+            # shellcheck disable=SC2034
             XUI_UPGRADE_MODE=true
             run_module "${SCRIPT_DIR}/modules/50-3x-ui.sh"
             if ! (run_module "${SCRIPT_DIR}/modules/60-configure-xui.sh"); then

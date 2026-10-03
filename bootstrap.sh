@@ -47,8 +47,8 @@ valid_domain() {
 if [[ "$COMMAND" == "help" || "$COMMAND" == "-h" || "$COMMAND" == "--help" ]]; then
     cat <<EOF
 Использование:
-  sudo bash bootstrap.sh [install|preflight|upgrade-3x-ui|remove|status|access]
-  sudo env REPO_COMMIT=<полный-SHA-коммита> bash bootstrap.sh [install|preflight|upgrade-3x-ui|remove|status|access]
+  sudo bash bootstrap.sh [install|preflight|doctor|upgrade-3x-ui|remove|status|access]
+  sudo env REPO_COMMIT=<полный-SHA-коммита> bash bootstrap.sh [install|preflight|doctor|upgrade-3x-ui|remove|status|access]
 
 REPO_COMMIT необязателен. Для закреплённой установки скачайте bootstrap.sh
 из того же коммита, что указан в REPO_COMMIT.
@@ -81,7 +81,7 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 case "$COMMAND" in
-    status|access|remove|delete|uninstall|preflight|upgrade-3x-ui)
+    status|access|remove|delete|uninstall|preflight|doctor|upgrade-3x-ui)
         validate_install_dir
         [[ ! -L "$INSTALL_DIR" && -f "$INSTALL_DIR/scripts/install.sh" &&
             ! -L "$INSTALL_DIR/scripts/install.sh" ]] || {
@@ -393,6 +393,7 @@ show_menu() {
 6) Обновить версию 3x-ui
 7) Резервные копии
 8) Удалить компоненты
+9) Диагностика установленного сервера
 0) Выход
 EOF
 
@@ -423,6 +424,9 @@ EOF
                 ;;
             8)
                 if ! bash scripts/install.sh remove; then echo "Удаление не завершено"; fi
+                ;;
+            9)
+                if ! bash scripts/install.sh doctor; then echo "Диагностика обнаружила проблемы"; fi
                 ;;
             0)
                 exit 0

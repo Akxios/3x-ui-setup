@@ -42,7 +42,7 @@ prepare_acme_directories() {
 
 verify_acme_http_route() {
     local challenge_dir="$WEB_ROOT/.well-known/acme-challenge"
-    local probe response url enabled_file domain address attempt served
+    local probe response url enabled_file domain address served
     local -a domains=("$DOMAIN") addresses=(127.0.0.1)
     if bool_enabled "${ENABLE_WWW:-false}"; then
         domains+=("www.${DOMAIN}")
@@ -63,7 +63,7 @@ verify_acme_http_route() {
             served=false
             # nginx reload returns before every worker has necessarily switched
             # to the new vhost, so allow a short convergence window.
-            for attempt in 1 2 3 4 5; do
+            for _ in 1 2 3 4 5; do
                 if response="$(curl --noproxy '*' --silent --show-error --fail --connect-timeout 2 --max-time 3 \
                     --resolve "${domain}:80:${address}" "$url" 2>> "$LOG_FILE")" &&
                     [[ "$response" == "${probe##*/}" ]]; then

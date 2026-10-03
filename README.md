@@ -69,12 +69,15 @@ sudo bash scripts/install.sh access
 ```bash
 sudo bash scripts/install.sh status
 sudo bash scripts/install.sh preflight
+sudo bash scripts/install.sh doctor
 sudo bash scripts/install.sh nginx
 sudo bash scripts/install.sh firewall
 sudo bash scripts/install.sh upgrade-3x-ui
 sudo bash scripts/install.sh remove
 ```
 
-`preflight` проверяет параметры, пути, SSH и занятые порты до изменения сервера. Обновление версии 3x-ui запускается только отдельной командой после настройки тега и его SHA-256 в `.env`; обычный `all` сохраняет установленную версию. При удалении UFW остаётся включённым по умолчанию. Скрипт не меняет настройки SSH, не настраивает DNS и не создаёт Xray inbound или клиентов. Повторный запуск и удаление описаны в [эксплуатации](docs/operations.md). Для проблем с сертификатом смотрите [диагностику ACME](docs/operations.md#сертификат-lets-encrypt).
+`preflight` проверяет параметры, пути, SSH и занятые порты до изменения сервера. `doctor` проверяет уже установленный сервер: DNS, nginx, TLS, локальные маршруты, UFW, Fail2Ban и привязку портов панели. Он не меняет конфигурацию и возвращает ненулевой код при проблемах. Обновление версии 3x-ui запускается только отдельной командой после настройки тега и его SHA-256 в `.env`; обычный `all` сохраняет установленную версию. При удалении UFW остаётся включённым по умолчанию. Скрипт не меняет настройки SSH, не настраивает DNS и не создаёт Xray inbound или клиентов. Повторный запуск и удаление описаны в [эксплуатации](docs/operations.md). Для проблем с сертификатом смотрите [диагностику ACME](docs/operations.md#сертификат-lets-encrypt).
+
+Изменения проверяются в CI на Debian 12 и Ubuntu 24.04: синтаксис Bash, ShellCheck, Python-тесты и установка всех трёх страниц через настоящий nginx в одноразовых контейнерах. Сертификат Let’s Encrypt и панель 3x-ui в этом тесте не устанавливаются: им нужны публичный домен и полноценная служба systemd.
 
 Лицензия: [MIT](LICENSE).

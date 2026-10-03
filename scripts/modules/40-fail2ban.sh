@@ -41,7 +41,7 @@ if [[ "$legacy_migrated" == true ]]; then rm -f "$legacy_file"; fi
 
 if fail2ban-client -t >> "$LOG_FILE" 2>&1 && systemctl enable fail2ban >> "$LOG_FILE" 2>&1 && systemctl restart fail2ban >> "$LOG_FILE" 2>&1; then
     jail_active=false
-    for attempt in 1 2 3 4 5; do
+    for _ in 1 2 3 4 5; do
         if systemctl is-active --quiet fail2ban && fail2ban-client ping >> "$LOG_FILE" 2>&1 &&
             fail2ban-client status sshd >> "$LOG_FILE" 2>&1 &&
             { ! bool_enabled "$ENABLE_NGINX_BOTSEARCH" || fail2ban-client status nginx-botsearch >> "$LOG_FILE" 2>&1; }; then

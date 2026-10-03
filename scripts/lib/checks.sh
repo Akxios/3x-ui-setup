@@ -26,8 +26,8 @@ detect_ssh_ports() {
     # The active SSH session is authoritative even when sshd runs through
     # systemd socket activation or a Match block changes sshd -T output.
     if [[ -n "${SSH_CONNECTION:-}" ]]; then
-        local remote_ip remote_port local_ip local_port
-        read -r remote_ip remote_port local_ip local_port <<< "$SSH_CONNECTION"
+        local local_port
+        read -r _ _ _ local_port <<< "$SSH_CONNECTION"
         if [[ "$local_port" =~ ^[0-9]+$ ]]; then
             ports="$ports $local_port"
         fi

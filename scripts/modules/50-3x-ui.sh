@@ -113,4 +113,8 @@ if ! bool_enabled "${XUI_AUTO_CONFIGURE:-true}"; then
 fi
 
 ok "Установка 3x-ui завершена"
-if [[ "${XUI_UPGRADE_MODE:-false}" == true ]]; then XUI_UPGRADE_APPLIED=true; fi
+if [[ "${XUI_UPGRADE_MODE:-false}" == true ]]; then
+    # Read by the caller after this module is sourced.
+    # shellcheck disable=SC2034
+    XUI_UPGRADE_APPLIED=true
+fi
