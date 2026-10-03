@@ -74,7 +74,9 @@ source "$SCRIPT_DIR/modules/20-nginx.sh"'''
                 result = self.install_site(selected)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 html = page.read_text()
-                self.assertEqual(html.splitlines()[1], "<!-- Managed by 3x-ui-setup -->")
+                self.assertEqual(
+                    html.splitlines()[1], "<!-- Managed by 3x-ui-setup -->"
+                )
                 self.assertIn(f"<title>{title} · site.example.org</title>", html)
                 self.assertNotIn("{{DOMAIN}}", html)
 
