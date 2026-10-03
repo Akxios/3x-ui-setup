@@ -58,6 +58,7 @@ apply_env_defaults() {
 
     set_default ENABLE_NGINX "true"
     set_default WEB_ROOT "/var/www/${DOMAIN}/html"
+    set_default SITE_TEMPLATE "tribe"
     set_default NGINX_AUTO_HTTPS "true"
     set_default NGINX_USE_HTTPS "false"
     set_default NGINX_CERT_PATH "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem"
@@ -159,6 +160,10 @@ validate_env() {
     validate_bool PURGE_PACKAGES
     validate_bool REMOVE_CONFIRM
     validate_bool VERBOSE
+    case "$SITE_TEMPLATE" in
+        tribe|numbers|notepad) ;;
+        *) fail "SITE_TEMPLATE: выберите tribe, numbers или notepad" ;;
+    esac
 
     if [[ "$command" == "all" || "$command" == "nginx" || "$command" == "preflight" ]] &&
         bool_enabled "${ENABLE_NGINX:-true}" &&

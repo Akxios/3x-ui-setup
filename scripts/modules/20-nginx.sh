@@ -87,7 +87,14 @@ verify_acme_http_route() {
 
 install_www_placeholder() {
     local index_file="$WEB_ROOT/index.html"
-    local managed=false legacy_file staged
+    local managed=false legacy_file staged site_template
+
+    case "${SITE_TEMPLATE:-tribe}" in
+        tribe) site_template="${PROJECT_DIR}/templates/www/index.html.tpl" ;;
+        numbers) site_template="${PROJECT_DIR}/templates/www/index.numbers.html.tpl" ;;
+        notepad) site_template="${PROJECT_DIR}/templates/www/index.notepad.html.tpl" ;;
+        *) fail "Неизвестный шаблон сайта SITE_TEMPLATE: ${SITE_TEMPLATE}" ;;
+    esac
 
     prepare_webroot_directories
     if [[ -e "$index_file" || -L "$index_file" ]]; then
@@ -109,7 +116,7 @@ install_www_placeholder() {
 
     if [[ "$managed" == true ]]; then
         staged="$(mktemp "$WEB_ROOT/.index-new.XXXXXX")"
-        if ! render_template "${PROJECT_DIR}/templates/www/index.html.tpl" "$staged"; then
+        if ! render_template "$site_template" "$staged"; then
             rm -f "$staged"
             fail "Не удалось подготовить страницу сайта"
         fi

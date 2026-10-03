@@ -237,6 +237,41 @@ maybe_edit_env() {
     fi
 }
 
+choose_site_template() {
+    load_env_file .env || return 1
+    local current="${SITE_TEMPLATE:-tribe}" answer selected
+    case "$current" in
+        tribe|numbers|notepad) ;;
+        *) current="не выбран" ;;
+    esac
+    cat <<'EOF'
+
+╭─ Выбор шаблона сайта ─────────────────────────────────────────────────╮
+│  1  Племя                                                           │
+│     Небольшая игра: люди, еда, сезоны. Прогресс — в браузере.        │
+│                                                                      │
+│  2  Генератор чисел                                                  │
+│     Диапазон, серия чисел и история. История — в браузере.           │
+│                                                                      │
+│  3  Блокнот                                                          │
+│     Заметка с автосохранением и экспортом .txt. Текст — в браузере.  │
+╰──────────────────────────────────────────────────────────────────────╯
+EOF
+    printf 'Текущий выбор: %s\n' "$current"
+    read -r -p "Выберите 1–3 [Enter — оставить текущий]: " answer || return 1
+    case "$answer" in
+        "")
+            [[ "$current" != "не выбран" ]] || { echo "ОШИБКА: выберите шаблон 1–3" >&2; return 1; }
+            return 0
+            ;;
+        1) selected=tribe ;;
+        2) selected=numbers ;;
+        3) selected=notepad ;;
+        *) echo "ОШИБКА: выберите 1, 2 или 3" >&2; return 1 ;;
+    esac
+    set_env_value SITE_TEMPLATE "$selected"
+}
+
 install_flow() {
     load_env_file .env || return 1
 
@@ -260,6 +295,7 @@ install_flow() {
         return $?
     fi
     maybe_edit_env || return 1
+    choose_site_template || return 1
 
     echo
     read -r -p "Начать установку? [y/N] " reply || return 1
@@ -307,12 +343,13 @@ menu_header() {
 }
 
 menu_settings() {
-    printf '\n1) Быстрая настройка\n2) Открыть полный .env\n0) Назад\n'
+    printf '\n1) Быстрая настройка\n2) Открыть полный .env\n3) Выбрать шаблон сайта\n0) Назад\n'
     local answer
     read -r -p "Выберите действие: " answer || return 1
     case "$answer" in
         1) configure_minimal_env ;;
         2) "${EDITOR:-nano}" .env ;;
+        3) choose_site_template ;;
         0) return 0 ;;
         *) echo "Неизвестный пункт: $answer"; return 1 ;;
     esac
