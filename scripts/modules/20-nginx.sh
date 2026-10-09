@@ -87,7 +87,7 @@ verify_acme_http_route() {
 
 install_www_placeholder() {
     local index_file="$WEB_ROOT/index.html"
-    local managed=false legacy_file staged site_template
+    local managed=false legacy_file legacy_template staged site_template
 
     case "${SITE_TEMPLATE:-tribe}" in
         tribe) site_template="${PROJECT_DIR}/templates/www/index.html.tpl" ;;
@@ -103,11 +103,21 @@ install_www_placeholder() {
             managed=true
         else
             legacy_file="$(mktemp "$WEB_ROOT/.index-legacy.XXXXXX")"
-            if ! render_template "${PROJECT_DIR}/templates/www/index.legacy.html.tpl" "$legacy_file"; then
-                rm -f "$legacy_file"
-                fail "Не удалось проверить прежнюю страницу сайта"
-            fi
-            if cmp -s "$legacy_file" "$index_file"; then managed=true; fi
+            # Keep exact matches for both shipped placeholders. The v1.1.1
+            # version differs only in formatting, but broad HTML matching
+            # could overwrite an administrator's similar-looking page.
+            for legacy_template in \
+                "${PROJECT_DIR}/templates/www/index.legacy.html.tpl" \
+                "${PROJECT_DIR}/templates/www/index.legacy-v1.1.1.html.tpl"; do
+                if ! render_template "$legacy_template" "$legacy_file"; then
+                    rm -f "$legacy_file"
+                    fail "Не удалось проверить прежнюю страницу сайта"
+                fi
+                if cmp -s "$legacy_file" "$index_file"; then
+                    managed=true
+                    break
+                fi
+            done
             rm -f "$legacy_file"
         fi
     else

@@ -1,5 +1,6 @@
 """Site template selection and browser-only behavior."""
 
+import hashlib
 import os
 import re
 import shutil
@@ -103,6 +104,26 @@ source "$SCRIPT_DIR/modules/20-nginx.sh"'''
         result = self.install_site("notepad")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("<title>Блокнот · site.example.org</title>", page.read_text())
+
+    def test_v1_1_1_placeholder_is_upgraded_but_modified_copy_is_preserved(self):
+        template = (ROOT / "templates/www/index.legacy-v1.1.1.html.tpl").read_bytes()
+        self.assertEqual(
+            hashlib.sha256(template).hexdigest(),
+            "fd538ae8e5fe4b8ac90fa38abee323c6cac6424c60f58aec1324913a5a890dbf",
+        )
+        old_page = template.decode().replace("{{DOMAIN}}", "site.example.org")
+        page = self.webroot / "index.html"
+        page.write_text(old_page)
+
+        result = self.install_site("numbers")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("<title>Генератор чисел · site.example.org</title>", page.read_text())
+
+        modified_page = old_page.replace("Сервер работает.", "Мой сервер работает.")
+        page.write_text(modified_page)
+        result = self.install_site("notepad")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(page.read_text(), modified_page)
 
     def test_bootstrap_choice_panel_describes_and_persists_selection(self):
         (self.base / ".env").write_text(
